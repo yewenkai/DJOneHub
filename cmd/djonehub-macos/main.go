@@ -107,6 +107,7 @@ type app struct {
 
 	labMu          sync.Mutex
 	labSampleMu    sync.Mutex
+	labTestMu      sync.Mutex
 	labSamples     []cellularLabSample
 	labLoaded      bool
 	labPath        string
@@ -760,6 +761,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/network/traffic", a.networkTraffic)
 	mux.HandleFunc("GET /api/network/lab", a.cellularLabHistory)
 	mux.HandleFunc("POST /api/network/lab/sample", a.cellularLabSampleNow)
+	mux.HandleFunc("POST /api/network/lab/web-test", a.cellularLabWebTest)
 	mux.HandleFunc("POST /api/network/lab/speed-test", a.cellularLabSpeedTest)
 	mux.HandleFunc("POST /api/network/check-4g", a.check4GRoute)
 	mux.HandleFunc("POST /api/network/check-proxy", a.checkProxyRoute)

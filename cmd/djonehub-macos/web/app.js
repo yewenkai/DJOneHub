@@ -546,6 +546,76 @@ function latestLabMetric(samples, key) {
   return null;
 }
 
+function latestLabSampleWith(samples, key) {
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    if (samples[index]?.[key] != null) return samples[index];
+  }
+  return null;
+}
+
+function cellularLabDiagnosis(latest, speed, webSample) {
+  const rsrp = Number(latest.rsrp);
+  const rsrq = Number(latest.rsrq);
+  const sinr = Number(latest.sinr);
+  let radio = "无线待测";
+  if (Number.isFinite(rsrp) && Number.isFinite(rsrq) && Number.isFinite(sinr)) {
+    if (rsrp >= -80 && rsrq >= -10 && sinr >= 20) radio = "无线优秀";
+    else if (rsrp >= -95 && rsrq >= -15 && sinr >= 10) radio = "无线良好";
+    else radio = "无线偏弱";
+  }
+  const web = webSample?.web_probe;
+  const webUsable = web && Number(web.success_percent) >= 67;
+  const slowThroughput = Number.isFinite(speed) && speed < 2;
+  if (webUsable && slowThroughput) {
+    return { value: `${radio} · 网页可用`, detail: "吞吐偏低，符合数据面或核心网拥塞特征" };
+  }
+  if (webUsable) {
+    return { value: `${radio} · 网页可用`, detail: `国内站点成功 ${web.success_count}/${web.target_count}` };
+  }
+  if (web) {
+    return { value: `${radio} · 网页不稳定`, detail: `国内站点成功 ${web.success_count}/${web.target_count}` };
+  }
+  if (slowThroughput) {
+    return { value: `${radio} · 吞吐偏低`, detail: "建议执行国内网页体验测试区分可用性" };
+  }
+  return { value: radio, detail: "等待网页体验或下载测速结果" };
+}
+
+function renderWebProbeResults(sample) {
+  const panel = $("#lab-web-results");
+  const probe = sample?.web_probe;
+  if (!probe || !Array.isArray(probe.results)) {
+    panel.hidden = true;
+    panel.replaceChildren();
+    return;
+  }
+  panel.hidden = false;
+  const heading = document.createElement("div");
+  heading.className = "lab-web-heading";
+  const title = document.createElement("strong");
+  title.textContent = `国内网页体验 · 成功 ${probe.success_count}/${probe.target_count}`;
+  const route = document.createElement("small");
+  route.textContent = `${probe.interface || "--"} · 源地址 ${probe.source_ip || "--"} · 读取 ${formatTrafficBytes(probe.bytes_read)}`;
+  heading.append(title, route);
+  const list = document.createElement("div");
+  list.className = "lab-web-targets";
+  probe.results.forEach((result) => {
+    const row = document.createElement("article");
+    row.className = `lab-web-target ${result.ok ? "ok" : "bad"}`;
+    const name = document.createElement("strong");
+    name.textContent = result.name;
+    const metrics = document.createElement("p");
+    metrics.textContent = result.ok
+      ? `DNS ${labMetric(result.dns_ms, " ms", 1)} · TCP ${labMetric(result.connect_ms, " ms", 1)} · TLS ${labMetric(result.tls_ms, " ms", 1)} · TTFB ${labMetric(result.ttfb_ms, " ms", 1)} · 总计 ${labMetric(result.total_ms, " ms", 1)}`
+      : result.error || "测试失败";
+    const status = document.createElement("small");
+    status.textContent = result.ok ? `HTTP ${result.status_code} · ${result.resolved_ip}` : "未通过";
+    row.append(name, metrics, status);
+    list.append(row);
+  });
+  panel.replaceChildren(heading, list);
+}
+
 function labWindowSamples() {
   const hours = Number($("#lab-window")?.value || 6);
   const cutoff = Date.now() - hours * 60 * 60 * 1000;
@@ -644,15 +714,21 @@ function renderCellularLab() {
   const latency = latestLabMetric(cellularLabSamples, "latency_ms");
   const loss = latestLabMetric(cellularLabSamples, "packet_loss_percent");
   const speed = latestLabMetric(cellularLabSamples, "download_mbps");
+  const webSample = latestLabSampleWith(cellularLabSamples, "web_probe");
+  const web = webSample?.web_probe;
+  const diagnosis = cellularLabDiagnosis(latest, speed, webSample);
   $("#lab-current").replaceChildren(
     diagnosticCard("RSRP", labMetric(latest.rsrp, " dBm"), "参考信号功率"),
     diagnosticCard("RSRQ", labMetric(latest.rsrq, " dB"), "参考信号质量"),
     diagnosticCard("SINR", labMetric(latest.sinr, " dB"), "信号与干扰噪声比"),
     diagnosticCard("频段 / 信道", [latest.band, latest.channel ? `EARFCN ${latest.channel}` : ""].filter(Boolean).join(" · ") || "--", `${latest.network_mode || ""} ${latest.duplex || ""}`.trim()),
     diagnosticCard("服务小区", latest.cell_id || "--", [`PCI ${latest.pci ?? "--"}`, `TAC ${latest.tac || "--"}`, `${latest.mcc || ""}${latest.mnc || ""}`].join(" · ")),
-    diagnosticCard("延迟 / 丢包", latency === null ? "--" : `${labMetric(latency, " ms", 1)} · ${labMetric(loss, "%", 1)}`, "每分钟轻量探测 1.1.1.1"),
-    diagnosticCard("下载测速", speed === null ? "尚未测速" : labMetric(speed, " Mbps", 2), "仅保留手动测速结果"),
+    diagnosticCard("延迟 / 丢包", latency === null ? "--" : `${labMetric(latency, " ms", 1)} · ${labMetric(loss, "%", 1)}`, "每分钟探测阿里公共 DNS 10 次"),
+    diagnosticCard("Cloudflare 国际路径", speed === null ? "尚未测速" : labMetric(speed, " Mbps", 2), "不代表国内综合网速"),
+    diagnosticCard("国内网页", web ? `成功 ${web.success_count}/${web.target_count}` : "尚未测试", web ? `中位 TTFB ${labMetric(web.median_ttfb_ms, " ms", 1)} · 总计 ${labMetric(web.median_total_ms, " ms", 1)}` : "百度、腾讯云、京东低流量测试"),
+    diagnosticCard("综合判断", diagnosis.value, diagnosis.detail),
   );
+  renderWebProbeResults(webSample);
   const routeText = latest.route_interface || "未知";
   const sampled = latest.sampled_at_ms ? new Date(latest.sampled_at_ms).toLocaleTimeString("zh-CN", { hour12: false }) : "--";
   $("#lab-status").textContent = latest.cellular_route
@@ -666,6 +742,10 @@ function renderCellularLab() {
   renderLabChart("#chart-latency", samples, [{ key: "latency_ms", label: "延迟", color: "#ea580c" }]);
   renderLabChart("#chart-loss", samples, [{ key: "packet_loss_percent", label: "丢包", color: "#dc2626" }]);
   renderLabChart("#chart-speed", samples, [{ key: "download_mbps", label: "下载", color: "#0891b2" }]);
+  renderLabChart("#chart-web", samples, [
+    { key: "web_ttfb_ms", label: "TTFB", color: "#7c3aed" },
+    { key: "web_total_ms", label: "32 KB 总耗时", color: "#0f766e" },
+  ]);
 }
 
 async function loadCellularLab() {
@@ -1266,10 +1346,32 @@ $("#lab-sample").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
+$("#lab-web-test").addEventListener("click", async () => {
+  const confirmed = await showModal({
+    title: "测试国内网页体验",
+    message: "将通过 4G USB 默认出口依次访问百度、腾讯云和京东，每站最多读取 32 KB，总流量约 100 KB。检测到 VPN、代理 Fake-IP 或非公网地址时会自动取消。",
+    confirmLabel: "开始测试",
+  });
+  if (!confirmed) return;
+  const button = $("#lab-web-test");
+  button.disabled = true;
+  button.textContent = "测试中...";
+  try {
+    const result = await api("/api/network/lab/web-test", { method: "POST", body: "{}" });
+    await loadCellularLab();
+    const probe = result.web_probe || {};
+    notice(`国内网页测试完成：成功 ${probe.success_count || 0}/${probe.target_count || 3}`);
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "测试国内网页";
+  }
+});
 $("#lab-speed-test").addEventListener("click", async () => {
   const confirmed = await showModal({
-    title: "执行下载测速",
-    message: "将通过当前默认出口下载约 5 MB 测试数据。只有 4G USB 网卡作为默认出口时才会执行。",
+    title: "执行 Cloudflare 国际路径测速",
+    message: "将通过当前默认出口从 Cloudflare 下载约 5 MB 测试数据。该结果只代表到 Cloudflare 的路径，不代表国内综合网速。",
     confirmLabel: "开始测速",
   });
   if (!confirmed) return;
@@ -1284,7 +1386,7 @@ $("#lab-speed-test").addEventListener("click", async () => {
     notice(error.message);
   } finally {
     button.disabled = false;
-    button.textContent = "5 MB 下载测速";
+    button.textContent = "5 MB 国际测速";
   }
 });
 $("#workmode-sms").addEventListener("click", () =>
