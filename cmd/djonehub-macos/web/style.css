@@ -54,7 +54,7 @@
 }
 * { box-sizing: border-box; }
 body { min-width: 320px; margin: 0; background: var(--page); color: var(--text); }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .52; }
 
@@ -135,12 +135,26 @@ input:focus { border-color: #6698ed; box-shadow: 0 0 0 3px rgba(77, 130, 232, .1
 .compact-heading { margin-top: 21px; }
 .subheading { margin: 28px 0 9px; color: #334155; font-size: 15px; }
 .control-panel { flex-wrap: wrap; padding: 4px 0 2px; }
+.range-control { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; font-weight: 650; }
+.range-control select { min-height: 36px; padding: 0 32px 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-strong); }
 
 .diagnostic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .diagnostic-card { min-height: 108px; padding: 14px 15px; border: 1px solid #d9dee6; border-radius: 7px; background: #fff; }
 .diagnostic-card span { display: block; color: #778396; font-size: 12px; font-weight: 600; }
 .diagnostic-card strong { display: block; margin-top: 8px; overflow-wrap: anywhere; color: #263447; font-size: 16px; line-height: 1.25; }
 .diagnostic-card small { display: block; margin-top: 8px; color: #7c8898; font-size: 12px; line-height: 1.4; }
+
+.lab-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.lab-chart { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.lab-chart:last-child { grid-column: 1 / -1; }
+.lab-chart figcaption { color: var(--text-strong); font-size: 13px; font-weight: 700; }
+.lab-chart figcaption small { margin-left: 4px; color: var(--text-soft); font-weight: 500; }
+.lab-chart svg { display: block; width: 100%; height: auto; margin-top: 8px; overflow: visible; }
+.chart-grid-line { stroke: var(--border-soft); stroke-width: 1; }
+.chart-axis-label { fill: var(--text-soft); font-size: 10px; }
+.chart-empty { display: grid; min-height: 178px; place-items: center; color: var(--text-soft); font-size: 12px; }
+.chart-legend { display: flex; gap: 14px; justify-content: center; color: var(--text-muted); font-size: 11px; }
+.chart-legend span::before { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border-radius: 50%; background: var(--legend-color); content: ""; }
 
 .list { border-top: 1px solid #d9dee6; }
 .list.empty { padding: 42px 0; color: #8591a2; text-align: center; }
@@ -293,6 +307,8 @@ input { border-color: var(--border); background: var(--surface); color: var(--te
   .section-heading { align-items: flex-start; flex-direction: column; }
   .heading-actions { justify-content: flex-start; flex-wrap: wrap; }
   .diagnostic-grid, .fold-panel > #esim-runtime { grid-template-columns: 1fr; }
+  .lab-chart-grid { grid-template-columns: 1fr; }
+  .lab-chart:last-child { grid-column: auto; }
   .item { grid-template-columns: 1fr; gap: 7px; }
   .sms-actions, .profile-actions { justify-content: flex-start; flex-wrap: wrap; }
   .profile-badge { text-align: left; }

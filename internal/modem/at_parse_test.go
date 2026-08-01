@@ -116,6 +116,22 @@ func TestParseServingCellLTEInfoIncludesRadio(t *testing.T) {
 	if info.RSRP != -75 || info.RSRQ != -8 || info.SINR != 11 || info.Duplex != "FDD" || info.Band != "LTE BAND 8" || info.Channel != 3740 {
 		t.Fatalf("parseServingCellLTEInfo()=%+v", info)
 	}
+	if info.MCC != "460" || info.MNC != "01" || info.CellID != "8401A29" || info.PCI != 132 {
+		t.Fatalf("parseServingCellLTEInfo() cell identity=%+v", info)
+	}
+}
+
+func TestParseServingCellLTEInfoChinaBroadnetTDD(t *testing.T) {
+	info, ok := ParseServingCellLTEInfo("\r\n+QENG: \"servingcell\",\"NOCONN\",\"LTE\",\"TDD\",460,15,99DD883,344,38950,40,5,5,51D7,-69,-7,-41,30,-\r\nOK\r\n")
+	if !ok {
+		t.Fatal("ParseServingCellLTEInfo() ok=false")
+	}
+	if info.RSRP != -69 || info.RSRQ != -7 || info.SINR != 30 || info.Duplex != "TDD" || info.Band != "LTE BAND 40" || info.Channel != 38950 {
+		t.Fatalf("ParseServingCellLTEInfo() radio=%+v", info)
+	}
+	if info.MCC != "460" || info.MNC != "15" || info.CellID != "99DD883" || info.PCI != 344 || info.TAC != "51D7" {
+		t.Fatalf("ParseServingCellLTEInfo() cell identity=%+v", info)
+	}
 }
 
 func TestParseQNWInfoModeAndDuplex(t *testing.T) {

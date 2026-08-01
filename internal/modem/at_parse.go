@@ -217,6 +217,17 @@ type ServingCellLTEInfo struct {
 	Duplex  string
 	Band    string
 	Channel uint32
+	MCC     string
+	MNC     string
+	CellID  string
+	PCI     int
+	TAC     string
+}
+
+// ParseServingCellLTEInfo exposes the Quectel serving-cell parser to local
+// applications that share the modem AT transport without a modem.Manager.
+func ParseServingCellLTEInfo(resp string) (ServingCellLTEInfo, bool) {
+	return parseServingCellLTEInfo(resp)
 }
 
 func parseServingCellLTE(resp string) (int, int, bool) {
@@ -241,6 +252,14 @@ func parseServingCellLTEInfo(resp string) (ServingCellLTEInfo, bool) {
 	if len(parts) > 3 {
 		info.Duplex = strings.Trim(strings.TrimSpace(parts[3]), "\"")
 	}
+	if len(parts) > 5 {
+		info.MCC = strings.Trim(strings.TrimSpace(parts[4]), "\"")
+		info.MNC = strings.Trim(strings.TrimSpace(parts[5]), "\"")
+	}
+	if len(parts) > 7 {
+		info.CellID = strings.Trim(strings.TrimSpace(parts[6]), "\"")
+		info.PCI, _ = strconv.Atoi(strings.TrimSpace(parts[7]))
+	}
 	if channel, err := strconv.ParseUint(strings.TrimSpace(parts[8]), 10, 32); err == nil {
 		info.Channel = uint32(channel)
 	}
@@ -248,10 +267,15 @@ func parseServingCellLTEInfo(resp string) (ServingCellLTEInfo, bool) {
 	if band != "" {
 		info.Band = "LTE BAND " + strings.Trim(band, "\"")
 	}
+	if len(parts) > 12 {
+		info.TAC = strings.Trim(strings.TrimSpace(parts[12]), "\"")
+	}
 
 	tail := parts[len(parts)-5:]
-	parsed := make([]int, 0, len(tail))
-	for _, part := range tail {
+	// RSRP, RSRQ, RSSI and SINR are required. Quectel firmware may report the
+	// final SRXLEV field as "-" while the four radio-quality fields stay valid.
+	parsed := make([]int, 0, 4)
+	for _, part := range tail[:4] {
 		part = strings.TrimSpace(part)
 		var val int
 		if _, err := fmt.Sscanf(part, "%d", &val); err != nil {
@@ -259,7 +283,7 @@ func parseServingCellLTEInfo(resp string) (ServingCellLTEInfo, bool) {
 		}
 		parsed = append(parsed, val)
 	}
-	if len(parsed) != 5 {
+	if len(parsed) != 4 {
 		return ServingCellLTEInfo{}, false
 	}
 

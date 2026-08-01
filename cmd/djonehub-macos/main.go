@@ -104,6 +104,13 @@ type app struct {
 
 	trafficMu        sync.Mutex
 	trafficBaselines map[string]networkByteCounters
+
+	labMu          sync.Mutex
+	labSampleMu    sync.Mutex
+	labSamples     []cellularLabSample
+	labLoaded      bool
+	labPath        string
+	labLastPersist time.Time
 }
 
 type usbInterfaceStatus struct {
@@ -357,6 +364,7 @@ func serve(instance *app, listen string) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go instance.startCellularLabSampler(ctx)
 
 	if !instance.demo {
 		log.Printf("DJOneHub is using %s", instance.port)
@@ -750,6 +758,9 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/at", a.executeAT)
 	mux.HandleFunc("GET /api/network", a.networkDiagnostic)
 	mux.HandleFunc("GET /api/network/traffic", a.networkTraffic)
+	mux.HandleFunc("GET /api/network/lab", a.cellularLabHistory)
+	mux.HandleFunc("POST /api/network/lab/sample", a.cellularLabSampleNow)
+	mux.HandleFunc("POST /api/network/lab/speed-test", a.cellularLabSpeedTest)
 	mux.HandleFunc("POST /api/network/check-4g", a.check4GRoute)
 	mux.HandleFunc("POST /api/network/check-proxy", a.checkProxyRoute)
 	mux.HandleFunc("POST /api/network/usbnet", a.setUSBNetMode)
@@ -871,6 +882,7 @@ func (a *app) usbATStatus() (modem.DeviceStatus, error) {
 	qccidResp, _ := a.usbAT.Command("AT+QCCID", 3*time.Second)
 	cimiResp, _ := a.usbAT.Command("AT+CIMI", 3*time.Second)
 	qnwinfoResp, _ := a.usbAT.Command("AT+QNWINFO", 3*time.Second)
+	qengResp, _ := a.usbAT.Command(`AT+QENG="servingcell"`, 3*time.Second)
 	usbnetResp, _ := a.usbAT.Command(`AT+QCFG="usbnet"`, 3*time.Second)
 
 	if cpinErr != nil {
@@ -897,6 +909,17 @@ func (a *app) usbATStatus() (modem.DeviceStatus, error) {
 		RadioBand:     band,
 		RadioChannel:  channel,
 		USBNetMode:    usbnetMode,
+	}
+	if cell, ok := modem.ParseServingCellLTEInfo(qengResp); ok {
+		status.SignalRSRP = cell.RSRP
+		status.SignalRSRQ = cell.RSRQ
+		status.SignalSINR = cell.SINR
+		status.CellID = cell.CellID
+		status.RadioBand = cell.Band
+		status.RadioChannel = cell.Channel
+		if cell.Duplex != "" {
+			status.NetworkDuplex = cell.Duplex
+		}
 	}
 	if status.Operator == "" && strings.Contains(copsResp, "CHN-UNICOM") {
 		status.Operator = "CHN-UNICOM"

@@ -5,6 +5,9 @@ let esimHealthInFlight = false;
 let networkTrafficTimer = null;
 let networkTrafficPrevious = null;
 let networkTrafficInFlight = false;
+let cellularLabTimer = null;
+let cellularLabSamples = [];
+let cellularLabInFlight = false;
 
 function setThemePreference(theme) {
   if (theme === "light" || theme === "dark") {
@@ -532,6 +535,161 @@ function renderNetworkCheck(label, result) {
   list.replaceChildren(row, ...existing);
 }
 
+function labMetric(value, suffix, digits = 0) {
+  return Number.isFinite(value) ? `${Number(value).toFixed(digits)}${suffix}` : "--";
+}
+
+function latestLabMetric(samples, key) {
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    if (Number.isFinite(samples[index]?.[key])) return samples[index][key];
+  }
+  return null;
+}
+
+function labWindowSamples() {
+  const hours = Number($("#lab-window")?.value || 6);
+  const cutoff = Date.now() - hours * 60 * 60 * 1000;
+  return cellularLabSamples.filter((sample) => Number(sample.sampled_at_ms) >= cutoff);
+}
+
+function renderLabChart(selector, samples, series) {
+  const host = $(selector);
+  host.replaceChildren();
+  const pointsBySeries = series.map((item) => ({
+    ...item,
+    points: samples
+      .filter((sample) => Number.isFinite(sample[item.key]))
+      .map((sample) => ({ time: Number(sample.sampled_at_ms), value: Number(sample[item.key]) })),
+  }));
+  const allPoints = pointsBySeries.flatMap((item) => item.points);
+  if (!allPoints.length) {
+    const empty = document.createElement("div");
+    empty.className = "chart-empty";
+    empty.textContent = "暂无数据";
+    host.append(empty);
+    return;
+  }
+  const width = 640;
+  const height = 190;
+  const left = 48;
+  const right = 14;
+  const top = 15;
+  const bottom = 31;
+  const times = allPoints.map((point) => point.time);
+  const values = allPoints.map((point) => point.value);
+  let minTime = Math.min(...times);
+  let maxTime = Math.max(...times);
+  let minValue = Math.min(...values);
+  let maxValue = Math.max(...values);
+  if (minTime === maxTime) { minTime -= 30000; maxTime += 30000; }
+  if (minValue === maxValue) { minValue -= 1; maxValue += 1; }
+  const padding = Math.max((maxValue - minValue) * 0.12, 0.5);
+  minValue -= padding;
+  maxValue += padding;
+  const x = (time) => left + ((time - minTime) / (maxTime - minTime)) * (width - left - right);
+  const y = (value) => top + ((maxValue - value) / (maxValue - minValue)) * (height - top - bottom);
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", series.map((item) => item.label).join("、") + "历史趋势");
+  for (let line = 0; line <= 3; line += 1) {
+    const gridY = top + (line / 3) * (height - top - bottom);
+    const grid = document.createElementNS(svgNS, "line");
+    grid.setAttribute("x1", left); grid.setAttribute("x2", width - right);
+    grid.setAttribute("y1", gridY); grid.setAttribute("y2", gridY);
+    grid.setAttribute("class", "chart-grid-line");
+    svg.append(grid);
+    const label = document.createElementNS(svgNS, "text");
+    label.setAttribute("x", left - 7); label.setAttribute("y", gridY + 4);
+    label.setAttribute("class", "chart-axis-label"); label.setAttribute("text-anchor", "end");
+    label.textContent = (maxValue - (line / 3) * (maxValue - minValue)).toFixed(maxValue - minValue < 10 ? 1 : 0);
+    svg.append(label);
+  }
+  const timeFormat = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  [[minTime, "start"], [maxTime, "end"]].forEach(([time, anchor]) => {
+    const label = document.createElementNS(svgNS, "text");
+    label.setAttribute("x", x(time)); label.setAttribute("y", height - 8);
+    label.setAttribute("class", "chart-axis-label"); label.setAttribute("text-anchor", anchor);
+    label.textContent = timeFormat.format(new Date(time));
+    svg.append(label);
+  });
+  pointsBySeries.forEach((item) => {
+    if (!item.points.length) return;
+    const polyline = document.createElementNS(svgNS, "polyline");
+    polyline.setAttribute("points", item.points.map((point) => `${x(point.time).toFixed(1)},${y(point.value).toFixed(1)}`).join(" "));
+    polyline.setAttribute("fill", "none");
+    polyline.setAttribute("stroke", item.color);
+    polyline.setAttribute("stroke-width", "2.4");
+    polyline.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.append(polyline);
+  });
+  host.append(svg);
+  if (series.length > 1) {
+    const legend = document.createElement("div");
+    legend.className = "chart-legend";
+    series.forEach((item) => {
+      const label = document.createElement("span");
+      label.style.setProperty("--legend-color", item.color);
+      label.textContent = item.label;
+      legend.append(label);
+    });
+    host.append(legend);
+  }
+}
+
+function renderCellularLab() {
+  const samples = labWindowSamples();
+  const latest = cellularLabSamples.at(-1) || {};
+  const latency = latestLabMetric(cellularLabSamples, "latency_ms");
+  const loss = latestLabMetric(cellularLabSamples, "packet_loss_percent");
+  const speed = latestLabMetric(cellularLabSamples, "download_mbps");
+  $("#lab-current").replaceChildren(
+    diagnosticCard("RSRP", labMetric(latest.rsrp, " dBm"), "参考信号功率"),
+    diagnosticCard("RSRQ", labMetric(latest.rsrq, " dB"), "参考信号质量"),
+    diagnosticCard("SINR", labMetric(latest.sinr, " dB"), "信号与干扰噪声比"),
+    diagnosticCard("频段 / 信道", [latest.band, latest.channel ? `EARFCN ${latest.channel}` : ""].filter(Boolean).join(" · ") || "--", `${latest.network_mode || ""} ${latest.duplex || ""}`.trim()),
+    diagnosticCard("服务小区", latest.cell_id || "--", [`PCI ${latest.pci ?? "--"}`, `TAC ${latest.tac || "--"}`, `${latest.mcc || ""}${latest.mnc || ""}`].join(" · ")),
+    diagnosticCard("延迟 / 丢包", latency === null ? "--" : `${labMetric(latency, " ms", 1)} · ${labMetric(loss, "%", 1)}`, "每分钟轻量探测 1.1.1.1"),
+    diagnosticCard("下载测速", speed === null ? "尚未测速" : labMetric(speed, " Mbps", 2), "仅保留手动测速结果"),
+  );
+  const routeText = latest.route_interface || "未知";
+  const sampled = latest.sampled_at_ms ? new Date(latest.sampled_at_ms).toLocaleTimeString("zh-CN", { hour12: false }) : "--";
+  $("#lab-status").textContent = latest.cellular_route
+    ? `4G USB 网卡是默认出口 · 最近采样 ${sampled} · ${cellularLabSamples.length} 个历史点`
+    : `无线指标可用；默认出口为 ${routeText}，延迟、丢包和测速暂不计入，避免混入 Wi-Fi/VPN 数据 · 最近采样 ${sampled}`;
+  renderLabChart("#chart-rsrp", samples, [{ key: "rsrp", label: "RSRP", color: "#2563eb" }]);
+  renderLabChart("#chart-quality", samples, [
+    { key: "rsrq", label: "RSRQ", color: "#8b5cf6" },
+    { key: "sinr", label: "SINR", color: "#16a34a" },
+  ]);
+  renderLabChart("#chart-latency", samples, [{ key: "latency_ms", label: "延迟", color: "#ea580c" }]);
+  renderLabChart("#chart-loss", samples, [{ key: "packet_loss_percent", label: "丢包", color: "#dc2626" }]);
+  renderLabChart("#chart-speed", samples, [{ key: "download_mbps", label: "下载", color: "#0891b2" }]);
+}
+
+async function loadCellularLab() {
+  if (cellularLabInFlight) return;
+  cellularLabInFlight = true;
+  try {
+    const result = await api("/api/network/lab");
+    cellularLabSamples = Array.isArray(result.samples) ? result.samples : [];
+    renderCellularLab();
+  } catch (error) {
+    $("#lab-status").textContent = `读取蜂窝实验数据失败：${error.message}`;
+  } finally {
+    cellularLabInFlight = false;
+  }
+}
+
+function setCellularLabPolling(enabled) {
+  clearInterval(cellularLabTimer);
+  cellularLabTimer = null;
+  if (!enabled) return;
+  void loadCellularLab();
+  cellularLabTimer = setInterval(loadCellularLab, 30000);
+}
+
 async function runNetworkCheck(label, path, button) {
   button.disabled = true;
   try {
@@ -979,7 +1137,12 @@ document.querySelectorAll(".tab").forEach((tab) => {
     $(`#${tab.dataset.view}`).classList.add("active");
     if (tab.dataset.view === "esim") loadESIM();
     else setESIMHealthPolling(false);
-    if (tab.dataset.view === "network") loadNetwork();
+    if (tab.dataset.view === "network") {
+      loadNetwork();
+      setCellularLabPolling(true);
+    } else {
+      setCellularLabPolling(false);
+    }
   });
 });
 
@@ -1089,6 +1252,41 @@ $("#clear-module-sms").addEventListener("click", async () => {
 $("#refresh-esim").addEventListener("click", loadESIM);
 $("#probe-esim-phonebook").addEventListener("click", probeESIMPhonebook);
 $("#refresh-network").addEventListener("click", loadNetwork);
+$("#lab-window").addEventListener("change", renderCellularLab);
+$("#lab-sample").addEventListener("click", async () => {
+  const button = $("#lab-sample");
+  button.disabled = true;
+  try {
+    await api("/api/network/lab/sample", { method: "POST", body: "{}" });
+    await loadCellularLab();
+    notice("蜂窝指标已采样");
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#lab-speed-test").addEventListener("click", async () => {
+  const confirmed = await showModal({
+    title: "执行下载测速",
+    message: "将通过当前默认出口下载约 5 MB 测试数据。只有 4G USB 网卡作为默认出口时才会执行。",
+    confirmLabel: "开始测速",
+  });
+  if (!confirmed) return;
+  const button = $("#lab-speed-test");
+  button.disabled = true;
+  button.textContent = "测速中...";
+  try {
+    const result = await api("/api/network/lab/speed-test", { method: "POST", body: JSON.stringify({ bytes: 5000000 }) });
+    await loadCellularLab();
+    notice(`下载测速完成：${Number(result.download_mbps || 0).toFixed(2)} Mbps`);
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "5 MB 下载测速";
+  }
+});
 $("#workmode-sms").addEventListener("click", () =>
   switchWorkMode(0, "短信模式", $("#workmode-sms")));
 $("#workmode-network").addEventListener("click", () =>

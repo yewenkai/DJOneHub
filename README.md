@@ -18,6 +18,7 @@ DJOneHub 是一款面向**大疆第一代 4G 模块**的第三方 macOS 管理�
 | Profile 号码资料 | 已实现 | 将手动填写的号码保存到模块通讯录，并按 ICCID 关联 Profile |
 | USB 4G 上网 | 已实现 | 切换 USB 网卡模式，让 macOS 使用 SIM 卡流量上网 |
 | 网络与流量 | 已实现 | 查看 USB 网卡、默认出口、代理连通性、实时速度和本次流量 |
+| 蜂窝网络实验室 | 已实现 | 记录 RSRP、RSRQ、SINR、频段、小区、延迟、丢包和手动下载测速趋势 |
 | AT 调试 | 已实现 | 在网页中直接向模块发送 AT 指令 |
 | 深浅色外观 | 已实现 | 支持浅色、深色和跟随系统 |
 | Intel Mac | 尚未发布 | 当前预览发行包仅提供 Apple Silicon 版本 |
@@ -212,6 +213,14 @@ xattr -dr com.apple.quarantine ./djonehub ./bin ./lib
 ![为 Baiwang 网络服务配置本地代理](docs/images/macos-proxy.png)
 
 页面流量数据仅用于观察当前会话，不等同于运营商账单。
+
+### 蜂窝网络实验室
+
+网络页面会每 30 秒读取一次 LTE 服务小区，记录 RSRP、RSRQ、SINR、频段、EARFCN、Cell ID、PCI 和 TAC，并保留最近 24 小时的本机历史。历史文件保存在当前用户的 DJOneHub 配置目录，不包含 ICCID、IMSI 或短信内容。
+
+延迟和丢包使用少量 ICMP 数据探测 `1.1.1.1`。只有 macOS 默认出口确认为 4G USB 网卡时才会执行；如果默认出口仍是 Wi-Fi 或 VPN，页面会保留无线指标，但不会把其他网络的结果误记为蜂窝体验。
+
+下载测速不会后台自动运行。点击“5 MB 下载测速”并确认后，程序才会从 Cloudflare 测速端点下载约 5 MB 数据，并将结果写入历史。开始前请确认套餐和漫游资费。
 
 ### AT 调试
 

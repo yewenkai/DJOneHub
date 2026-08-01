@@ -120,7 +120,34 @@
     </section>
 
     <section id="network" class="view">
-      <div class="view-intro"><div><span class="section-kicker">USB NETWORK</span><h2>网络诊断</h2></div><p>检查蜂窝注册、USB 网卡与默认出口。</p></div>
+      <div class="view-intro"><div><span class="section-kicker">CELLULAR LAB</span><h2>蜂窝网络实验室</h2></div><p>记录无线质量、小区与真实 4G 出口体验。</p></div>
+      <div class="section-heading">
+        <h2>实时观测</h2>
+        <div class="heading-actions">
+          <button id="lab-sample" class="secondary" type="button">立即采样</button>
+          <button id="lab-speed-test" type="button">5 MB 下载测速</button>
+        </div>
+      </div>
+      <p id="lab-status" class="inline-status">正在读取蜂窝实验数据...</p>
+      <div id="lab-current" class="diagnostic-grid"></div>
+      <div class="section-heading compact-heading">
+        <h2>历史趋势</h2>
+        <label class="range-control">时间范围
+          <select id="lab-window">
+            <option value="1">最近 1 小时</option>
+            <option value="6" selected>最近 6 小时</option>
+            <option value="24">最近 24 小时</option>
+          </select>
+        </label>
+      </div>
+      <div id="lab-charts" class="lab-chart-grid">
+        <figure class="lab-chart"><figcaption>RSRP <small>dBm</small></figcaption><div id="chart-rsrp"></div></figure>
+        <figure class="lab-chart"><figcaption>RSRQ / SINR <small>dB</small></figcaption><div id="chart-quality"></div></figure>
+        <figure class="lab-chart"><figcaption>平均延迟 <small>ms</small></figcaption><div id="chart-latency"></div></figure>
+        <figure class="lab-chart"><figcaption>丢包率 <small>%</small></figcaption><div id="chart-loss"></div></figure>
+        <figure class="lab-chart"><figcaption>下载测速 <small>Mbps · 手动</small></figcaption><div id="chart-speed"></div></figure>
+      </div>
+      <p class="inline-status">无线指标每 30 秒记录并保留 24 小时；延迟/丢包仅在 4G USB 网卡是默认出口时测量。测速只在手动确认后下载约 5 MB。</p>
       <div class="section-heading">
         <h2>网络诊断</h2>
         <button id="refresh-network" class="secondary" type="button">刷新</button>
