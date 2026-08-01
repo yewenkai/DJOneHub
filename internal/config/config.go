@@ -8,36 +8,11 @@ import (
 )
 
 const (
-	ESIMTransportAT            = "at"
-	ESIMTransportQMI           = "qmi"
-	ESIMTransportMBIM          = "mbim"
 	MBIMTransportAuto          = "auto"
 	MBIMTransportProxy         = "proxy"
 	MBIMTransportDirect        = "direct"
 	DefaultWebhookTextTemplate = "{{device_label}} {{text}}"
 )
-
-func NormalizeESIMTransport(in string) string {
-	switch strings.ToLower(strings.TrimSpace(in)) {
-	case "", ESIMTransportAT:
-		return ESIMTransportAT
-	case ESIMTransportQMI:
-		return ESIMTransportQMI
-	case ESIMTransportMBIM:
-		return ESIMTransportMBIM
-	default:
-		return strings.ToLower(strings.TrimSpace(in))
-	}
-}
-
-func ValidateESIMTransport(in string) error {
-	switch NormalizeESIMTransport(in) {
-	case ESIMTransportAT, ESIMTransportQMI, ESIMTransportMBIM:
-		return nil
-	default:
-		return fmt.Errorf("invalid esim transport: %q", strings.TrimSpace(in))
-	}
-}
 
 func NormalizeMBIMTransport(in string) string {
 	switch strings.ToLower(strings.TrimSpace(in)) {
@@ -111,22 +86,6 @@ type ServerConfig struct {
 	Debug bool   `mapstructure:"debug"`
 }
 
-type ESIMSwitchConfig struct {
-	// UseRefreshTrue uses refresh=true for the main switch path. Default false preserves current behavior.
-	UseRefreshTrue bool `mapstructure:"use_refresh_true"`
-	// EventGatedConverge uses UIM indication events to gate post-switch convergence. Default false.
-	EventGatedConverge bool `mapstructure:"event_gated_converge"`
-	// RadioCycle performs LowPower -> Online radio cycling around switch. Default false.
-	RadioCycle bool `mapstructure:"radio_cycle"`
-	// ReinitWindowMS is the expected UIM reinitialization window in milliseconds. Default 0 disables the window.
-	// Only effective when EventGatedConverge=true; ReinitWindow marks the period during which GetUIMReadiness
-	// timeouts do not trigger whole-core recovery (to avoid triggering on firmware reinitialization stalls).
-	// If EventGatedConverge=false, ReinitWindowMS is silently ignored.
-	ReinitWindowMS int `mapstructure:"reinit_window_ms"`
-	// NASAttachTimeoutMS bounds optional attach waiting after Online in milliseconds. Default 0 means do not block.
-	NASAttachTimeoutMS int `mapstructure:"nas_attach_timeout_ms"`
-}
-
 type DeviceConfig struct {
 	ID            string `mapstructure:"id"`
 	Name          string `mapstructure:"name"` // 设备显示名称
@@ -143,11 +102,8 @@ type DeviceConfig struct {
 	// 可选：qmi-proxy abstract socket 名称和可执行文件路径。留空使用 quectel-qmi-go 默认值。
 	QMIProxyPath       string `mapstructure:"qmi_proxy_path"`
 	QMIProxyExecutable string `mapstructure:"qmi_proxy_executable"`
-	ESIMTransport      string `mapstructure:"esim_transport"` // eSIM 传输通道: at|qmi|mbim，默认 at
 	DeviceBackend      string `mapstructure:"device_backend"` // 设备后端模式: at|qmi|mbim|auto，默认 at
 	USBNetMode         *int   `mapstructure:"usbnet_mode"`    // 可选：用于校验/设置 Quectel USBNET 模式
-	// ESIMSwitch controls deterministic eSIM switch behavior. Zero values preserve current behavior.
-	ESIMSwitch ESIMSwitchConfig `mapstructure:"esim_switch"`
 
 	OperatorSelectionMode string `mapstructure:"operator_selection_mode"`
 	OperatorSelectionPLMN string `mapstructure:"operator_selection_plmn"`

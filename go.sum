@@ -10,10 +10,6 @@ github.com/cloudwego/base64x v0.1.6 h1:t11wG9AECkCDk5fMSoxmufanudBtJ+/HemLstXDLI
 github.com/cloudwego/base64x v0.1.6/go.mod h1:OFcloc187FXDaYHvrNIjxSe8ncn0OOM8gEHfghB2IPU=
 github.com/creack/goselect v0.1.2 h1:2DNy14+JPjRBgPzAd1thbQp4BSIihxcBf0IXhQXDRa0=
 github.com/creack/goselect v0.1.2/go.mod h1:a/NhLweNvqIYMuxcMOuWY516Cimucms3DglDzQP3hKY=
-github.com/damonto/euicc-go v1.1.3-0.20260628013808-8d873a2dfc98 h1:n2VA/WOWZCYjcd90zAuH+PlZpDjiEeXfIO1rMbIEsfM=
-github.com/damonto/euicc-go v1.1.3-0.20260628013808-8d873a2dfc98/go.mod h1:L2YqXCb1ESnL1ZlqkQ7t/bVrcqrgt1hCwdzWrVzgYN0=
-github.com/damonto/uicc-go v0.0.0-20260622025011-5cf36d6c8626 h1:jcUx6ygMhU27ca9qn0qX3rZCa1956YYJcn/1NUhX8XQ=
-github.com/damonto/uicc-go v0.0.0-20260622025011-5cf36d6c8626/go.mod h1:4il4tcO0GJ2Bn8827RWDiMxNOnQpEApy3pwKliaR9uc=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=

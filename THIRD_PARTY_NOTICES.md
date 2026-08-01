@@ -30,8 +30,6 @@ The source repository includes vendored dependencies under `third_party/` so the
 
 | Component | License file |
 | --- | --- |
-| euicc-go | `third_party/euicc-go/LICENSE` |
-| uicc-go | `third_party/uicc-go/LICENSE` |
 | quectel-qmi-go | `third_party/quectel-qmi-go/LICENSE` |
 | strftime | `third_party/strftime/LICENSE` |
 | pkg/errors | `third_party/pkg-errors/LICENSE` |

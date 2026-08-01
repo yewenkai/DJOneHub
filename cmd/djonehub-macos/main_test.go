@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestSupportedUSBDeviceIdentity(t *testing.T) {
 	for _, tt := range []struct {
@@ -136,26 +139,21 @@ func TestParseUSBATOperator(t *testing.T) {
 	}
 }
 
-func TestInitUSBATESIMManagerAfterDelayedUSBOpen(t *testing.T) {
-	instance := &app{}
-
-	manager, switchAllowed := instance.currentESIMManager()
-	if manager != nil || switchAllowed {
-		t.Fatalf("initial eSIM state = (%v, %v), want unavailable", manager, switchAllowed)
-	}
-
-	instance.initUSBATESIMManager()
-	manager, switchAllowed = instance.currentESIMManager()
-	if manager == nil {
-		t.Fatal("USB AT recovery did not initialize the eSIM manager")
-	}
-	if !switchAllowed {
-		t.Fatal("USB AT eSIM manager should allow profile switching")
-	}
-
-	instance.initUSBATESIMManager()
-	managerAgain, _ := instance.currentESIMManager()
-	if managerAgain != manager {
-		t.Fatal("repeated USB AT recovery replaced the existing eSIM manager")
+func TestNextSMSPollDelay(t *testing.T) {
+	base := 8 * time.Second
+	for _, tt := range []struct {
+		failures int
+		want     time.Duration
+	}{
+		{failures: 0, want: 8 * time.Second},
+		{failures: 1, want: 8 * time.Second},
+		{failures: 2, want: 16 * time.Second},
+		{failures: 3, want: 32 * time.Second},
+		{failures: 4, want: 60 * time.Second},
+		{failures: 8, want: 60 * time.Second},
+	} {
+		if got := nextSMSPollDelay(base, tt.failures); got != tt.want {
+			t.Fatalf("nextSMSPollDelay(%s, %d) = %s, want %s", base, tt.failures, got, tt.want)
+		}
 	}
 }

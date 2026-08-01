@@ -72,5 +72,5 @@ xattr -dr com.apple.quarantine ./djonehub ./bin ./lib
 
 - 支持 macOS 13 Ventura 至 macOS 26 Tahoe；当前发行包仅支持 Apple Silicon，不支持 Intel Mac。
 - 仅监听本机地址，局域网中的其他设备无法直接访问管理网页。
-- 本项目为非官方工具，与 DJI、Quectel、运营商及 eSIM 卡片厂商无隶属或授权关系。
-- 使用短信、蜂窝数据和 eSIM 前，请确认运营商资费、漫游规则及当地法律要求。
+- 本项目为非官方工具，与 DJI、Quectel 及运营商无隶属或授权关系。
+- 使用短信和蜂窝数据前，请确认运营商资费、漫游规则及当地法律要求。

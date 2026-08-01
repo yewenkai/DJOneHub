@@ -43,7 +43,7 @@ type ServingSystem struct {
 	PSAttached bool
 }
 
-// SIMMetadata 表示 SIM/eSIM profile 的原生元数据。
+// SIMMetadata 表示 SIM 卡的原生元数据。
 type SIMMetadata struct {
 	NativeMCC    string
 	NativeMNC    string

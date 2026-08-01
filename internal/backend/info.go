@@ -53,7 +53,7 @@ type DeviceInfoProvider interface {
 	// QMI 实现：UIM.ReadTransparent读取 EF_SPN
 	GetNativeSPN(ctx context.Context) (string, error)
 
-	// GetSIMMetadata 读取 SIM/eSIM profile 的原生元数据。
+	// GetSIMMetadata 读取 SIM 卡的原生元数据。
 	// AT 实现：AT+CRSM 读取 EF_AD/GID/PNN/OPL/SST/UST
 	// QMI 实现：UIM.ReadTransparent/ReadRecord 读取对应 EF
 	GetSIMMetadata(ctx context.Context) (*SIMMetadata, error)

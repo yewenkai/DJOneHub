@@ -9,7 +9,8 @@ EG25-G. It does not require UTM for AT-mode management.
 - Modem, SIM, operator, registration and signal status
 - Receive and send SMS through the modem AT port
 - Execute explicit AT commands
-- Read and switch physical eUICC profiles through AT APDU transport
+- USB network diagnostics, traffic counters and cellular history charts
+- Experimental VoLTE call control and macOS audio bridge diagnostics
 - Local management page at `http://127.0.0.1:7575`
 - Packaged Apple Silicon release (Intel packaging is planned separately)
 
@@ -83,8 +84,8 @@ To explore the management page before buying the module, run:
 ```
 
 Then open `http://127.0.0.1:7575`. Demo mode provides simulated modem status,
-SMS messages, AT command responses and eSIM profiles. It does not access a real
-SIM, send messages or switch a physical eSIM profile.
+SMS messages, AT command responses, network metrics and call states. It does not
+access a real SIM, send messages, use cellular data or place a real call.
 
 ## Launch at login
 
@@ -98,7 +99,7 @@ Logs are written to `~/Library/Logs/DJOneHub`.
 
 - Native QMI/MBIM control, Linux udev and network-namespace orchestration are
   excluded from this macOS entry point.
-- eSIM behavior depends on the physical eUICC and modem firmware. Profile
-  switching must be verified with real hardware.
+- VoLTE call audio depends on the modem firmware accepting the PCM interface
+  used by the experimental macOS audio bridge.
 - The release uses an ad-hoc signature rather than an Apple Developer ID. On
   first run, macOS may require approval in Privacy & Security.

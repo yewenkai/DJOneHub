@@ -1,6 +1,6 @@
-# DJOneHub 精简源码结构
+# DJOneHub 源码结构
 
-这份目录是从开发工作区中按 `cmd/djonehub-macos` 的真实 Go 依赖图整理出的最小可构建源码副本。原项目中的旧 Vue 前端、`node_modules`、Linux 服务端、机器人、未使用的管理后台和历史构建产物均未包含。
+这份目录以 `cmd/djonehub-macos` 为当前产品入口，同时保留了原 VoHive 的部分共享包和上游来源。原项目中的旧 Vue 前端、`node_modules`、Linux 服务端、机器人、未使用的管理后台和历史构建产物均未包含。
 
 ## 目录树
 
@@ -10,10 +10,9 @@ DJOneHub-source-minimal/
 │   └── djonehub-macos/       # macOS 主程序、USB AT、短信、网络与内嵌网页
 │       └── web/              # 当前实际显示的原生管理页面
 ├── internal/
-│   ├── apduarbiter/          # SIM/eUICC APDU 通道并发协调
+│   ├── apduarbiter/          # SIM APDU 通道并发协调
 │   ├── backend/              # AT、MBIM、QMI 后端的统一能力接口
 │   ├── config/               # 运行配置与设备配置
-│   ├── esim/                 # eUICC/Profile 读取、下载、切换和删除
 │   ├── modem/                # 调制解调器发现、AT 指令和状态解析
 │   └── simaid/               # SIM 应用 AID 发现与选择
 ├── pkg/
@@ -39,14 +38,13 @@ DJOneHub-source-minimal/
 
 ## 关键入口
 
-- `cmd/djonehub-macos/main.go`：HTTP 服务、设备状态、短信、eSIM、网络和流量 API。
+- `cmd/djonehub-macos/main.go`：HTTP 服务、设备状态、短信、通话、网络和流量 API。
 - `cmd/djonehub-macos/usbat_darwin.go`：macOS 上通过 libusb 接管大疆模块 USB AT 接口。
-- `cmd/djonehub-macos/usbat_esim_channel.go`：经 AT/APDU 访问实体 eUICC 卡片。
 - `cmd/djonehub-macos/web/`：由 `go:embed` 编译进二进制的网页界面。
 
 ## 为什么仍有 internal、pkg 和 third_party
 
-Go 以“包”为编译边界。macOS 主程序虽然集中在 `cmd/djonehub-macos`，但短信 PDU、eUICC、SIM APDU、MBIM/QMI 和日志能力依赖共享包，因此这些目录不能直接删除。
+Go 以“包”为编译边界。macOS 主程序集中在 `cmd/djonehub-macos`，并直接使用短信 PDU、调制解调器、SIM APDU 和配置等共享包。已不再使用的 eSIM 管理包及其本地第三方依赖已经移除。
 
 `third_party` 中只保留当前依赖图实际使用的本地替换模块。保留本地副本可以确保当前修改版协议实现与已验证发行包一致，同时保留各上游组件的许可证和来源信息。
 

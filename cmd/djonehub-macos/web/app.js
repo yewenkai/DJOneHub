@@ -1,7 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
 let lastSMSCount = null;
-let esimHealthPollTimer = null;
-let esimHealthInFlight = false;
 let networkTrafficTimer = null;
 let networkTrafficPrevious = null;
 let networkTrafficInFlight = false;
@@ -180,7 +178,7 @@ function renderHardwareDetails(status) {
   const hint = document.createElement("small");
   hint.textContent = status.discovery_error
     ? `当前限制：${status.discovery_error}`
-    : "AT 串口可用后，短信和 eSIM/卡片操作会自动启用。";
+    : "AT 通道可用后，短信、网络诊断和通话控制会自动启用。";
 
   panel.hidden = false;
   panel.replaceChildren(title, detail, hint);
@@ -308,27 +306,6 @@ async function loadSMS() {
   }
 }
 
-function profileRows(value) {
-  const groups = Array.isArray(value) ? value : value?.profiles || [];
-  return groups.flatMap((group) =>
-    (group.profiles || []).map((profile) => ({ ...profile, aid: group.aid_hex || "" })),
-  );
-}
-
-function profileDisplayName(profile) {
-  return profile?.name || profile?.service_provider_name || profile?.iccid || "未命名 Profile";
-}
-
-function activeProfile(profiles) {
-  return profiles.find((profile) => profile.state === 1) || null;
-}
-
-function maskIdentifier(value, keep = 4) {
-  const text = String(value || "");
-  if (text.length <= keep * 2) return text;
-  return `${text.slice(0, keep)} ${"•".repeat(Math.max(4, text.length - keep * 2))} ${text.slice(-keep)}`;
-}
-
 function maskPhoneNumber(value) {
   const text = String(value || "").trim();
   const digitCount = [...text].filter((char) => /\d/.test(char)).length;
@@ -339,179 +316,6 @@ function maskPhoneNumber(value) {
     digitIndex += 1;
     return digitIndex > 4 && digitIndex <= digitCount - 4 ? "*" : char;
   }).join("");
-}
-
-async function copyIdentifier(value, label) {
-  try {
-    await navigator.clipboard.writeText(value);
-    notice(`${label} 已复制`);
-  } catch (error) {
-    notice(`复制 ${label} 失败，请手动复制`);
-  }
-}
-
-async function editProfileNote(profile, note) {
-  const values = await showModal({
-    title: "编辑模块资料",
-    message: "这些资料保存在大疆模块中，并按 ICCID 与当前 Profile 关联。",
-    confirmLabel: "保存",
-    fields: [
-      { name: "label", label: "模块内名称", value: note.label || "", placeholder: "可选" },
-      { name: "phone", label: "模块号码", value: note.phone || "", placeholder: "可选" },
-      { name: "tags", label: "用途标签", value: note.tags || "", placeholder: "例如：英国验证码" },
-    ],
-  });
-  if (!values) return;
-  try {
-    await api("/api/esim/module-notes", {
-      method: "PUT",
-      body: JSON.stringify({ iccid: profile.iccid, label: values.label, phone: values.phone, tags: values.tags }),
-    });
-    notice("模块资料已保存");
-    await loadESIM();
-  } catch (error) {
-    notice(error.message);
-  }
-}
-
-function phonebookCheck(label, ok, detail) {
-  const card = document.createElement("div");
-  card.className = `phonebook-check ${ok ? "ok" : ""}`;
-  const title = document.createElement("strong");
-  title.textContent = label;
-  const text = document.createElement("small");
-  text.textContent = detail;
-  card.append(title, text);
-  return card;
-}
-
-async function probeESIMPhonebook() {
-  const button = $("#probe-esim-phonebook");
-  const status = $("#esim-phonebook-status");
-  const resultPanel = $("#esim-phonebook-result");
-  button.disabled = true;
-  status.textContent = "正在检测卡内通讯录能力，不会写入联系人...";
-  resultPanel.hidden = true;
-  try {
-    const result = await api("/api/esim/phonebook/probe", { method: "POST" });
-    const supported = result.storage_supported && result.storage_selected;
-    const portable = supported && result.read_supported && result.write_supported;
-    status.textContent = portable
-      ? "已确认当前 Profile 支持卡内通讯录读写；尚未写入任何联系人。"
-      : "当前 Profile 未完整确认卡内通讯录读写能力；不会进行写入。";
-    resultPanel.replaceChildren(
-      phonebookCheck("SIM 通讯录", result.storage_supported, result.storage_supported ? "支持 SM 卡内存储" : "未发现 SM 卡内存储"),
-      phonebookCheck("当前卡片", result.storage_selected, result.storage_selected ? "已安全选中 SM 存储" : "无法选中 SM 存储"),
-      phonebookCheck("读取能力", result.read_supported, result.read_supported ? "模块支持读取卡内联系人" : "模块未确认读取命令"),
-      phonebookCheck("写入接口", result.write_supported, result.write_supported ? "模块声明支持写入接口" : "模块未确认写入命令"),
-      phonebookCheck("当前状态", supported, result.storage_status || "未返回容量信息"),
-    );
-    resultPanel.hidden = false;
-  } catch (error) {
-    status.textContent = `通讯录检测失败：${error.message}`;
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function esimEIDRows(value) {
-  const eids = value?.chip_info?.eids;
-  return Array.isArray(eids) ? eids : [];
-}
-
-function renderESIMChip(overview) {
-  const panel = $("#esim-chip");
-  const chip = overview?.chip_info || {};
-  const eids = esimEIDRows(overview);
-  if (!chip.sku_name && !chip.serial_number && !chip.firmware && !eids.length) {
-    panel.hidden = true;
-    panel.replaceChildren();
-    return;
-  }
-  panel.hidden = false;
-  panel.replaceChildren(
-    diagnosticCard("卡类型", chip.sku_name || "eUICC/eSIM 卡片"),
-    diagnosticCard("固件", chip.firmware || "--", chip.serial_number ? `序列号 ${chip.serial_number}` : ""),
-    diagnosticCard("EID", eids.map((item) => item.eid).filter(Boolean).join(" · ") || "--"),
-  );
-}
-
-function renderESIMEIDList(overview) {
-  const eids = esimEIDRows(overview);
-  if (!eids.length) return [];
-  return eids.map((item) => {
-    const row = document.createElement("article");
-    row.className = "item esim-info-row";
-    const name = document.createElement("strong");
-    name.textContent = "已识别 eUICC";
-    const detail = document.createElement("p");
-    detail.textContent = [
-      item.eid ? `EID ${item.eid}` : "",
-      item.aid ? `AID ${item.aid}` : "",
-      item.free_nvram ? `可用空间 ${item.free_nvram}` : "",
-      item.firmware ? `固件 ${item.firmware}` : "",
-    ].filter(Boolean).join("\n");
-    const status = document.createElement("small");
-    status.textContent = item.spec || item.spec_guess || "eSIM";
-    row.append(name, detail, status);
-    return row;
-  });
-}
-
-function renderESIMEIDPanel(rows) {
-  if (!rows.length) return null;
-  const panel = document.createElement("details");
-  panel.className = "esim-euicc-panel";
-  const heading = document.createElement("summary");
-  heading.className = "esim-euicc-heading";
-  const title = document.createElement("strong");
-  title.textContent = "已识别 eUICC";
-  const hint = document.createElement("small");
-  hint.textContent = rows.length > 1 ? `${rows.length} 张 eSIM 卡片` : "卡片信息";
-  heading.append(title, hint);
-  panel.append(heading, ...rows);
-  return panel;
-}
-
-async function loadESIMHealth() {
-  if (esimHealthInFlight) return;
-  esimHealthInFlight = true;
-  const section = $("#esim-runtime-section");
-  const panel = $("#esim-runtime");
-  section.hidden = false;
-  panel.replaceChildren(diagnosticCard("Profile 检查", "正在检测"));
-  try {
-    const health = await api("/api/esim/health");
-    if (health.card_type === "physical_sim") {
-      section.hidden = true;
-      return;
-    }
-    if (!health.active_profile) {
-      panel.replaceChildren(diagnosticCard("Profile 检查", health.message || "未发现已启用 Profile"));
-      return;
-    }
-    const profile = health.active_profile;
-    const signal = Number.isFinite(health.signal_dbm) ? `${health.signal_dbm} dBm` : "--";
-    panel.replaceChildren(
-      diagnosticCard("当前启用", profileDisplayName(profile), profile.iccid ? `ICCID ${maskIdentifier(profile.iccid)}` : ""),
-      diagnosticCard("模块实际卡", health.module_iccid ? maskIdentifier(health.module_iccid) : "--", health.imsi ? `IMSI ${health.imsi}` : ""),
-      diagnosticCard("蜂窝注册", health.registration || "未注册", [displayOperatorName(health.operator), health.network_mode].filter(Boolean).join(" · ")),
-      diagnosticCard("信号", signal, health.registered ? "模块已接管当前 Profile" : "等待网络注册"),
-    );
-  } catch (error) {
-    panel.replaceChildren(diagnosticCard("Profile 检查", "暂时无法读取", error.message));
-  } finally {
-    esimHealthInFlight = false;
-  }
-}
-
-function setESIMHealthPolling(enabled) {
-  clearInterval(esimHealthPollTimer);
-  esimHealthPollTimer = null;
-  if (!enabled) return;
-  esimHealthPollTimer = setInterval(() => {
-    if ($("#esim").classList.contains("active")) void loadESIMHealth();
-  }, 30000);
 }
 
 function diagnosticCard(label, value, detail = "") {
@@ -1113,241 +917,11 @@ async function rebootModule() {
   }
 }
 
-async function loadESIM() {
-  const list = $("#esim-list");
-  const status = $("#esim-status");
-  const download = $("#esim-download-section");
-  const runtime = $("#esim-runtime-section");
-  const profilePanel = $("#esim-profile-panel");
-  const phonebook = $("#esim-phonebook-section");
-  $("#esim-chip").hidden = true;
-  $("#esim-chip").replaceChildren();
-  runtime.hidden = true;
-  download.hidden = false;
-  profilePanel.hidden = false;
-  phonebook.hidden = false;
-  list.className = "list empty";
-  list.textContent = "正在读取 eUICC";
-  status.textContent = "正在通过 AT+CCHO/CGLA 读取 eUICC/eSIM 卡片";
-  try {
-    const overview = await api("/api/esim");
-    if (overview.card_type === "physical_sim") {
-      status.textContent = overview.message;
-      list.textContent = overview.message;
-      download.hidden = true;
-      profilePanel.hidden = true;
-      phonebook.hidden = true;
-      setESIMHealthPolling(false);
-      return;
-    }
-    const notesResponse = await api("/api/esim/module-notes");
-    const notes = notesResponse.notes || {};
-    const profiles = profileRows(overview);
-    const eidRows = renderESIMEIDList(overview);
-    const eidPanel = renderESIMEIDPanel(eidRows);
-    renderESIMChip(overview);
-    const profileCount = profiles.length;
-    const eidCount = esimEIDRows(overview).length;
-    const active = activeProfile(profiles);
-    status.textContent = active
-      ? `已读取：${eidCount} 个 eUICC，${profileCount} 个 Profile · 当前使用 ${profileDisplayName(active)}`
-      : `已读取：${eidCount} 个 eUICC，${profileCount} 个 Profile · 未发现已启用 Profile`;
-    if (!profiles.length) {
-      if (eidRows.length) {
-        list.className = "list";
-        list.replaceChildren(eidPanel);
-        return;
-      }
-      list.textContent = "未发现 eUICC/eSIM 卡片参数";
-      return;
-    }
-    list.className = "list";
-    const profileItems = profiles.map((profile) => {
-      const note = notes[profile.iccid] || {};
-      const row = document.createElement("article");
-      row.className = `item esim-profile ${profile.state === 1 ? "active" : ""}`;
-      const name = document.createElement("strong");
-      name.textContent = note.label || profileDisplayName(profile);
-      const detail = document.createElement("p");
-      detail.textContent = [
-        note.label && note.label !== profileDisplayName(profile) ? `卡内名称：${profileDisplayName(profile)}` : "",
-        profile.service_provider_name ? `服务商：${profile.service_provider_name}` : "",
-        profile.class_text ? `类型：${profile.class_text}` : "",
-        note.tags ? `标签：${note.tags}` : "",
-      ].filter(Boolean).join("\n");
-      const metadata = document.createElement("div");
-      metadata.className = "profile-metadata";
-      if (note.phone) {
-        const phoneRow = document.createElement("div");
-        phoneRow.className = "profile-identifier-row";
-        const phone = document.createElement("code");
-        phone.className = "profile-iccid";
-        phone.textContent = `模块号码 ${maskPhoneNumber(note.phone)}`;
-        const revealPhone = document.createElement("button");
-        revealPhone.className = "secondary compact profile-toggle-button";
-        revealPhone.type = "button";
-        revealPhone.textContent = "显示";
-        revealPhone.addEventListener("click", () => {
-          const hidden = revealPhone.textContent === "显示";
-          phone.textContent = `模块号码 ${hidden ? note.phone : maskPhoneNumber(note.phone)}`;
-          revealPhone.textContent = hidden ? "隐藏" : "显示";
-        });
-        const copyPhone = document.createElement("button");
-        copyPhone.className = "secondary compact profile-copy-button";
-        copyPhone.type = "button";
-        copyPhone.textContent = "复制号码";
-        copyPhone.addEventListener("click", () => copyIdentifier(note.phone, "模块号码"));
-        phoneRow.append(phone, revealPhone, copyPhone);
-        metadata.append(phoneRow);
-      }
-      if (profile.iccid) {
-        const iccidRow = document.createElement("div");
-        iccidRow.className = "profile-identifier-row";
-        const iccid = document.createElement("code");
-        iccid.className = "profile-iccid";
-        iccid.textContent = `ICCID ${maskIdentifier(profile.iccid)}`;
-        const reveal = document.createElement("button");
-        reveal.className = "secondary compact profile-toggle-button";
-        reveal.type = "button";
-        reveal.textContent = "显示";
-        reveal.addEventListener("click", () => {
-          const hidden = reveal.textContent === "显示";
-          iccid.textContent = `ICCID ${hidden ? profile.iccid : maskIdentifier(profile.iccid)}`;
-          reveal.textContent = hidden ? "隐藏" : "显示";
-        });
-        const copy = document.createElement("button");
-        copy.className = "secondary compact profile-copy-button";
-        copy.type = "button";
-        copy.textContent = "复制 ICCID";
-        copy.addEventListener("click", () => copyIdentifier(profile.iccid, "ICCID"));
-        iccidRow.append(iccid, reveal, copy);
-        metadata.append(iccidRow);
-      }
-      const actionBox = document.createElement("div");
-      actionBox.className = "profile-actions";
-      if (profile.state !== 1) {
-        const button = document.createElement("button");
-        button.className = "compact";
-        button.textContent = "启用";
-        button.addEventListener("click", async () => {
-          const label = profileDisplayName(profile);
-          const confirmed = await showModal({
-            title: "启用 Profile",
-            message: `确定启用 ${label} 吗？当前正在使用的 eSIM Profile 会被切换。`,
-            confirmLabel: "启用",
-          });
-          if (!confirmed) {
-            return;
-          }
-          button.disabled = true;
-          button.textContent = "切换中";
-          try {
-            const result = await api("/api/esim/switch", {
-              method: "POST",
-              body: JSON.stringify({ iccid: profile.iccid, aid: profile.aid || "" }),
-            });
-            if (result.module_reboot_requested) {
-              status.textContent = `已切换到 ${label}；模块正在重启，等待新 Profile 接管（约 ${result.reconnect_wait_seconds || 10} 秒）`;
-              notice(`已切换 ${label}，模块正在重新读取新卡`);
-              setTimeout(async () => {
-                await loadESIM();
-                await loadStatus();
-              }, (result.reconnect_wait_seconds || 10) * 1000);
-            } else {
-              status.textContent = `Profile 已切换到 ${label}，但模块重启未确认：${result.module_reboot_warning || "请手动重启后再读取号码"}`;
-              notice("Profile 已切换，模块重启未确认");
-              await loadESIM();
-            }
-          } catch (error) {
-            status.textContent = `切换失败：${error.message}`;
-            notice(error.message);
-            button.disabled = false;
-            button.textContent = "启用";
-          }
-        });
-        actionBox.append(button);
-      } else {
-        const button = document.createElement("button");
-        button.className = "secondary compact";
-        button.type = "button";
-        button.textContent = "启用";
-        button.disabled = true;
-        actionBox.append(button);
-      }
-      const rename = document.createElement("button");
-      rename.className = "secondary compact";
-      rename.type = "button";
-      rename.textContent = "改名";
-      rename.addEventListener("click", async () => {
-        const values = await showModal({
-          title: "修改 Profile 名称",
-          message: "名称将写入 eUICC 卡片内部的 Profile nickname。",
-          confirmLabel: "保存",
-          fields: [{ name: "name", label: "Profile 名称", value: profileDisplayName(profile), required: true }],
-        });
-        if (!values?.name) return;
-        rename.disabled = true;
-        try {
-          await api("/api/esim/profile", { method: "PATCH", body: JSON.stringify({ iccid: profile.iccid, aid: profile.aid || "", name: values.name }) });
-          notice("Profile 名称已修改");
-          await loadESIM();
-        } catch (error) { notice(error.message); } finally { rename.disabled = false; }
-      });
-      const localNote = document.createElement("button");
-      localNote.className = "secondary compact";
-      localNote.type = "button";
-      localNote.textContent = "模块资料";
-      localNote.addEventListener("click", () => editProfileNote(profile, note));
-      const remove = document.createElement("button");
-      remove.className = "secondary danger compact";
-      remove.type = "button";
-      remove.textContent = "删除";
-      remove.disabled = profile.state === 1;
-      remove.addEventListener("click", async () => {
-        const last4 = String(profile.iccid || "").slice(-4);
-        const values = await showModal({
-          title: "删除 Profile",
-          message: `删除不可恢复。请输入 ICCID 后四位 ${last4} 确认。`,
-          confirmLabel: "删除",
-          danger: true,
-          fields: [{ name: "confirmation", label: "ICCID 后四位", required: true }],
-        });
-        if (!values) return;
-        if (values.confirmation !== last4) {
-          notice("ICCID 后四位不匹配，未执行删除");
-          return;
-        }
-        remove.disabled = true;
-        try {
-          await api("/api/esim/profile", { method: "DELETE", body: JSON.stringify({ iccid: profile.iccid, aid: profile.aid || "" }) });
-          notice("Profile 已删除");
-          await loadESIM();
-        } catch (error) { notice(error.message); } finally { remove.disabled = false; }
-      });
-      actionBox.append(localNote, rename, remove);
-      const description = document.createElement("div");
-      description.className = "profile-description";
-      description.append(detail, metadata);
-      row.append(name, description, actionBox);
-      return row;
-    });
-    list.replaceChildren(...(eidPanel ? [eidPanel] : []), ...profileItems);
-    void loadESIMHealth();
-    setESIMHealthPolling(true);
-  } catch (error) {
-    status.textContent = `读取失败：${error.message}`;
-    list.textContent = error.message;
-    setESIMHealthPolling(false);
-  }
-}
-
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     document.querySelectorAll(".tab, .view").forEach((el) => el.classList.remove("active"));
     tab.classList.add("active");
     $(`#${tab.dataset.view}`).classList.add("active");
-    if (tab.dataset.view === "esim") loadESIM();
-    else setESIMHealthPolling(false);
     if (tab.dataset.view === "network") {
       loadNetwork();
       setCellularLabPolling(true);
@@ -1356,29 +930,6 @@ document.querySelectorAll(".tab").forEach((tab) => {
     }
     if (tab.dataset.view === "voice") loadVoiceOverview();
   });
-});
-
-$("#esim-download-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const confirmed = await showModal({
-    title: "下载新的 Profile",
-    message: "将向 SM-DP+ 服务器下载并写入新的 eSIM Profile。写入期间请勿拔出模块。",
-    confirmLabel: "开始下载",
-  });
-  if (!confirmed) return;
-  const button = event.currentTarget.querySelector("button[type=submit]");
-  const status = $("#esim-download-status");
-  button.disabled = true;
-  status.textContent = "正在下载并写入 Profile，请勿拔出模块...";
-  try {
-    const result = await api("/api/esim/download", { method: "POST", body: JSON.stringify({
-      smdp: $("#esim-smdp").value, matching_id: $("#esim-matching-id").value,
-      confirmation_code: $("#esim-confirmation-code").value, imei: $("#esim-imei").value, aid: $("#esim-aid").value,
-    }) });
-    status.textContent = result.message || "Profile 下载完成，正在重新读取卡片";
-    notice("Profile 下载完成");
-    await loadESIM();
-  } catch (error) { status.textContent = `下载失败：${error.message}`; notice(error.message); } finally { button.disabled = false; }
 });
 
 $("#send-form").addEventListener("submit", async (event) => {
@@ -1491,8 +1042,6 @@ $("#clear-module-sms").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
-$("#refresh-esim").addEventListener("click", loadESIM);
-$("#probe-esim-phonebook").addEventListener("click", probeESIMPhonebook);
 $("#refresh-network").addEventListener("click", loadNetwork);
 $("#lab-window").addEventListener("change", renderCellularLab);
 $("#lab-sample").addEventListener("click", async () => {

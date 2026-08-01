@@ -81,44 +81,6 @@ devices: []
 	}
 }
 
-func TestLoadDecodesDeviceESIMSwitchFlags(t *testing.T) {
-	path := writeTempConfig(t, `
-devices:
-  - id: dev-esim
-    esim_switch:
-      use_refresh_true: true
-      event_gated_converge: true
-      radio_cycle: true
-      reinit_window_ms: 12000
-      nas_attach_timeout_ms: 45000
-`)
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if len(cfg.Devices) != 1 {
-		t.Fatalf("devices=%d want 1", len(cfg.Devices))
-	}
-
-	got := cfg.Devices[0].ESIMSwitch
-	if !got.UseRefreshTrue {
-		t.Fatal("UseRefreshTrue=false, want true")
-	}
-	if !got.EventGatedConverge {
-		t.Fatal("EventGatedConverge=false, want true")
-	}
-	if !got.RadioCycle {
-		t.Fatal("RadioCycle=false, want true")
-	}
-	if got.ReinitWindowMS != 12000 {
-		t.Fatalf("ReinitWindowMS=%d, want 12000", got.ReinitWindowMS)
-	}
-	if got.NASAttachTimeoutMS != 45000 {
-		t.Fatalf("NASAttachTimeoutMS=%d, want 45000", got.NASAttachTimeoutMS)
-	}
-}
-
 func TestUpdateNotificationInFilePersistsQQ(t *testing.T) {
 	path := writeTempConfig(t, `
 telegram:

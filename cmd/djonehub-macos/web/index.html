@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>DJOneHub for macOS</title>
   <script>
     try {
@@ -53,7 +54,6 @@
     <nav class="task-nav" aria-label="功能导航">
       <button class="tab active" data-view="sms"><span>短信</span><small>收件箱</small></button>
       <button class="tab" data-view="voice"><span>通话</span><small>VoLTE 实验</small></button>
-      <button class="tab" data-view="esim"><span>eSIM/卡片</span><small>Profile</small></button>
       <button class="tab" data-view="network"><span>网络</span><small>4G USB</small></button>
       <button class="tab" data-view="at"><span>AT 调试</span><small>诊断</small></button>
     </nav>
@@ -94,50 +94,6 @@
       <h2 class="subheading">当前通话</h2>
       <div id="voice-calls" class="list empty">当前没有语音通话</div>
       <p class="inline-status">实验功能：请优先使用耳机，避免扬声器声音被麦克风再次送回通话。紧急呼叫不在本功能测试范围内。</p>
-    </section>
-
-    <section id="esim" class="view">
-      <div class="view-intro"><div><span class="section-kicker">EUICC MANAGER</span><h2>eSIM / 卡片</h2></div><p>管理卡内 Profile，并核对模块实际接管状态。</p></div>
-      <div class="section-heading">
-        <h2>eSIM Profile</h2>
-        <button id="refresh-esim" class="secondary">刷新</button>
-      </div>
-      <p id="esim-status" class="inline-status">仅在 SIM 卡槽中插入 eUICC/eSIM 卡片时使用；普通实体 SIM 可以忽略。</p>
-      <details id="esim-download-section" class="fold-panel esim-download">
-        <summary><span>下载新 Profile</span><small>SM-DP+ 激活信息</small></summary>
-        <form id="esim-download-form" class="esim-download-grid">
-          <input id="esim-smdp" placeholder="SM-DP+ 地址" required>
-          <input id="esim-matching-id" placeholder="Matching ID（可选）">
-          <input id="esim-confirmation-code" placeholder="确认码（可选）">
-          <input id="esim-imei" inputmode="numeric" maxlength="15" placeholder="模块 IMEI（必填）" required>
-          <input id="esim-aid" placeholder="目标 eUICC AID（可选）">
-          <button type="submit">开始下载</button>
-        </form>
-        <p id="esim-download-status" class="inline-status">填写运营商提供的激活信息后才会执行下载。</p>
-      </details>
-
-      <details id="esim-profile-panel" class="profile-panel" open>
-        <summary class="profile-panel-heading"><span class="profile-panel-title"><span class="section-kicker">INSTALLED PROFILES</span><strong>已安装的 Profile</strong></span><small>启用、改名或删除卡内 Profile。</small></summary>
-        <div class="profile-panel-content">
-        <details class="fold-panel">
-          <summary><span>卡片概览</span><small>卡类型、固件、EID</small></summary>
-          <div id="esim-chip" class="diagnostic-grid" hidden></div>
-        </details>
-        <details id="esim-runtime-section" class="fold-panel" hidden>
-          <summary><span>当前 Profile 运行状态</span><small>自动刷新</small></summary>
-          <div id="esim-runtime" class="diagnostic-grid"></div>
-        </details>
-        <details id="esim-phonebook-section" class="fold-panel" hidden>
-          <summary><span>卡片通讯录兼容性</span><small>只读检测</small></summary>
-          <div class="phonebook-probe">
-            <p id="esim-phonebook-status" class="inline-status">检测当前 Profile 是否支持卡内通讯录；不会写入联系人。</p>
-            <button id="probe-esim-phonebook" class="secondary compact" type="button">检测当前卡片</button>
-            <div id="esim-phonebook-result" class="phonebook-result" hidden></div>
-          </div>
-        </details>
-        <div id="esim-list" class="list empty">尚未读取 eUICC/eSIM 卡片</div>
-        </div>
-      </details>
     </section>
 
     <section id="network" class="view">
@@ -192,7 +148,7 @@
         <button id="usbnet-mode-3" class="secondary" type="button">模式 3 · 实验</button>
         <button id="reboot-module" class="secondary danger" type="button">重启模块</button>
       </div>
-      <p class="inline-status">模式 1 已真机确认可同时使用 USB 网卡、短信、AT 与 eSIM 管理，建议日常保持此模式。模式 0 仅用于兼容性排查。切换 usbnet 后才需要重启模块。</p>
+      <p class="inline-status">模式 1 已真机确认可同时使用 USB 网卡、短信与 AT 调试，建议日常保持此模式。模式 0 仅用于兼容性排查。切换 usbnet 后才需要重启模块。</p>
       <h2 class="subheading">macOS 网络接口</h2>
       <div id="network-interfaces" class="list empty">尚未读取接口</div>
     </section>

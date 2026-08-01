@@ -249,7 +249,7 @@ func (m *Manager) SetUSBNetMode(mode int) error {
 	return nil
 }
 
-// OpenLogicalChannel 通过 AT+CCHO 打开 eUICC 的 logical channel
+// OpenLogicalChannel 通过 AT+CCHO 打开 SIM 应用的 logical channel。
 func (m *Manager) OpenLogicalChannel(aid string) (int, error) {
 	return m.openLogicalChannel(aid, "esim_session_open", "esim", apduarbiter.APDUClassEUICCWrite)
 }
