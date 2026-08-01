@@ -21,6 +21,7 @@ replace go.uber.org/multierr => ./third_party/multierr
 require (
 	github.com/damonto/euicc-go v1.1.3-0.20260628013808-8d873a2dfc98
 	github.com/damonto/uicc-go v0.0.0-20260629073618-7ddada6bb13e
+	github.com/gen2brain/malgo v0.11.25
 	github.com/iniwex5/quectel-qmi-go v0.6.0
 	github.com/lestrrat-go/file-rotatelogs v2.4.0+incompatible
 	github.com/spf13/viper v1.21.0

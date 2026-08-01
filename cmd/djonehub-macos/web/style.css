@@ -113,7 +113,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .inline-status { margin: 8px 0 13px; color: #788598; font-size: 13px; }
 #workmode-status { padding: 9px 12px; border-left: 2px solid #4f83e7; background: #f1f6ff; }
 
-.task-nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 26px 0 20px; padding: 5px; border: 1px solid #d9dee6; border-radius: 8px; background: #fff; }
+.task-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin: 26px 0 20px; padding: 5px; border: 1px solid #d9dee6; border-radius: 8px; background: #fff; }
 .tab { min-height: 56px; padding: 7px 10px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #718096; text-align: left; }
 .tab span { display: block; color: inherit; font-size: 14px; font-weight: 700; }
 .tab small { display: block; margin-top: 3px; color: #8b97a8; font-size: 11px; font-weight: 500; }
@@ -135,6 +135,10 @@ input:focus { border-color: #6698ed; box-shadow: 0 0 0 3px rgba(77, 130, 232, .1
 .compact-heading { margin-top: 21px; }
 .subheading { margin: 28px 0 9px; color: #334155; font-size: 15px; }
 .control-panel { flex-wrap: wrap; padding: 4px 0 2px; }
+.call-toolbar { grid-template-columns: minmax(220px, 1fr) auto auto; }
+.call-audio-option { display: inline-flex; min-height: 40px; align-items: center; gap: 8px; color: var(--text-muted, #718096); font-size: 13px; white-space: nowrap; }
+.call-audio-option input { width: 16px; min-height: 16px; margin: 0; accent-color: #2563eb; }
+.call-actions { margin: 12px 0 4px; }
 .range-control { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; font-weight: 650; }
 .range-control select { min-height: 36px; padding: 0 32px 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-strong); }
 

@@ -8,6 +8,10 @@ let networkTrafficInFlight = false;
 let cellularLabTimer = null;
 let cellularLabSamples = [];
 let cellularLabInFlight = false;
+let voiceOverview = null;
+let voiceStatusInFlight = false;
+let voiceCallsInFlight = false;
+let lastIncomingCallKey = "";
 
 function setThemePreference(theme) {
   if (theme === "light" || theme === "dark") {
@@ -516,6 +520,125 @@ function diagnosticCard(label, value, detail = "") {
     card.append(small);
   }
   return card;
+}
+
+const voiceCallStateNames = {
+  active: "通话中",
+  held: "保持",
+  dialing: "正在拨号",
+  alerting: "等待接听",
+  incoming: "来电",
+  waiting: "呼叫等待",
+  disconnected: "已结束",
+  unknown: "未知状态",
+};
+
+function renderVoiceCalls(calls, audio) {
+  const list = $("#voice-calls");
+  const rows = Array.isArray(calls) ? calls : [];
+  const incoming = rows.find((call) => call.state === "incoming" || call.state === "waiting");
+  $("#call-answer").disabled = !incoming;
+  $("#call-hangup").disabled = rows.length === 0;
+  $("#voice-audio-start").disabled = Boolean(audio?.running || audio?.stopping);
+  $("#voice-audio-stop").disabled = !audio?.running || Boolean(audio?.stopping);
+
+  if (incoming) {
+    const key = `${incoming.id}:${incoming.number || "unknown"}`;
+    if (lastIncomingCallKey !== key) {
+      notice(`收到来电：${maskPhoneNumber(incoming.number || "未知号码")}`);
+      lastIncomingCallKey = key;
+    }
+  } else {
+    lastIncomingCallKey = "";
+  }
+
+  if (!rows.length) {
+    list.className = "list empty";
+    list.textContent = "当前没有语音通话";
+    return;
+  }
+  list.className = "list";
+  list.replaceChildren(...rows.map((call) => {
+    const row = document.createElement("article");
+    row.className = "item";
+    const title = document.createElement("strong");
+    title.textContent = maskPhoneNumber(call.number || "未知号码");
+    const detail = document.createElement("p");
+    detail.textContent = call.direction === "incoming" ? "呼入" : "呼出";
+    const state = document.createElement("small");
+    state.textContent = voiceCallStateNames[call.state] || call.state;
+    row.append(title, detail, state);
+    return row;
+  }));
+}
+
+function renderVoiceOverview(overview) {
+  voiceOverview = overview;
+  const inventory = overview.inventory || {};
+  const audio = overview.audio || {};
+  $("#voice-audio-grid").replaceChildren(
+    diagnosticCard("USB Audio", overview.uac_enabled ? "已识别" : "未识别", inventory.error || "AC / AS Interface"),
+    diagnosticCard("模块下行", inventory.module_capture || audio.module_capture || "--", "模块通话音频 → Mac"),
+    diagnosticCard("模块上行", inventory.module_playback || audio.module_playback || "--", "Mac 麦克风 → 模块"),
+    diagnosticCard("Mac 麦克风", inventory.mac_capture || audio.mac_capture || "--"),
+    diagnosticCard("Mac 播放", inventory.mac_playback || audio.mac_playback || "--"),
+    diagnosticCard("模块音频路由", overview.audio_route ? "已接通" : "未接通", overview.audio_route ? "QPCMV 已在通话中启用" : "接通电话后自动启用"),
+    diagnosticCard("模块下行电平", `${audio.module_level || 0}%`, "对方声音进入模块 USB Audio"),
+    diagnosticCard("Mac 麦克风电平", `${audio.mac_level || 0}%`, "本机声音送往模块 USB Audio"),
+    diagnosticCard("音频桥", audio.running ? "运行中" : (audio.stopping ? "正在停止" : "已停止"), audio.running ? `${audio.sample_rate || 8000} Hz · 单声道` : (audio.last_error || "需要时手动或随拨号启动")),
+  );
+  const messages = [
+    overview.ims ? `IMS ${overview.ims}` : "",
+    overview.warning || "",
+    overview.last_error ? `最近提示：${overview.last_error}` : "",
+  ].filter(Boolean);
+  $("#voice-status").textContent = messages.join(" · ") || "通话控制已就绪";
+  renderVoiceCalls(overview.calls, audio);
+}
+
+async function loadVoiceOverview() {
+  if (voiceStatusInFlight) return;
+  voiceStatusInFlight = true;
+  try {
+    renderVoiceOverview(await api("/api/voice"));
+  } catch (error) {
+    $("#voice-status").textContent = `通话状态读取失败：${error.message}`;
+  } finally {
+    voiceStatusInFlight = false;
+  }
+}
+
+async function loadVoiceCalls() {
+  if (voiceCallsInFlight) return;
+  voiceCallsInFlight = true;
+  try {
+    const status = await api("/api/voice/calls");
+    renderVoiceCalls(status.calls, status.audio);
+    if (voiceOverview) {
+      voiceOverview.calls = status.calls;
+      voiceOverview.audio = status.audio;
+      voiceOverview.audio_route = status.audio_route;
+      renderVoiceOverview(voiceOverview);
+    }
+  } catch (_) {
+    // Other status and SMS polling can temporarily own the single AT channel.
+  } finally {
+    voiceCallsInFlight = false;
+  }
+}
+
+async function runVoiceAction(button, path, body, successMessage) {
+  button.disabled = true;
+  try {
+    await api(path, { method: "POST", body: JSON.stringify(body || {}) });
+    await Promise.all([loadVoiceCalls(), loadVoiceOverview()]);
+    notice(successMessage);
+  } catch (error) {
+    notice(error.message);
+    await loadVoiceOverview();
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderNetworkCheck(label, result) {
@@ -1223,6 +1346,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     } else {
       setCellularLabPolling(false);
     }
+    if (tab.dataset.view === "voice") loadVoiceOverview();
   });
 });
 
@@ -1285,6 +1409,36 @@ $("#at-form").addEventListener("submit", async (event) => {
     output.textContent = error.message;
   }
 });
+
+$("#call-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const number = $("#call-number").value.trim();
+  const confirmed = await showModal({
+    title: `拨打 ${maskPhoneNumber(number)}`,
+    message: "将使用当前 SIM 的 VoLTE/语音套餐发起真实电话，可能产生运营商费用。",
+    confirmLabel: "拨打",
+  });
+  if (!confirmed) return;
+  await runVoiceAction(
+    event.submitter,
+    "/api/voice/dial",
+    { number, with_audio: $("#call-with-audio").checked },
+    "拨号指令已发出",
+  );
+});
+
+$("#call-answer").addEventListener("click", () => runVoiceAction(
+  $("#call-answer"), "/api/voice/answer", { with_audio: $("#call-with-audio").checked }, "已接听",
+));
+$("#call-hangup").addEventListener("click", () => runVoiceAction(
+  $("#call-hangup"), "/api/voice/hangup", {}, "通话已挂断",
+));
+$("#voice-audio-start").addEventListener("click", () => runVoiceAction(
+  $("#voice-audio-start"), "/api/voice/audio/start", {}, "Mac 双向音频桥已启动",
+));
+$("#voice-audio-stop").addEventListener("click", () => runVoiceAction(
+  $("#voice-audio-stop"), "/api/voice/audio/stop", {}, "Mac 双向音频桥已停止",
+));
 
 $("#refresh").addEventListener("click", async () => {
   await Promise.all([loadStatus(), loadSMS()]);
@@ -1405,6 +1559,8 @@ $("#reboot-module").addEventListener("click", rebootModule);
 
 loadStatus();
 loadSMS();
+loadVoiceOverview();
 setNetworkTrafficPolling(true);
 setInterval(loadStatus, 10000);
 setInterval(loadSMS, 5000);
+setInterval(loadVoiceCalls, 1500);

@@ -12,6 +12,8 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +60,21 @@ func openDJIUSBAT() (*usbAT, error) {
 		C.libusb_close(handle)
 		C.libusb_exit(ctx)
 		return nil, err
+	}
+	if value := strings.TrimSpace(os.Getenv("DJONEHUB_USB_AT_INTERFACE")); value != "" {
+		iface, parseErr := strconv.Atoi(value)
+		if parseErr != nil {
+			C.libusb_close(handle)
+			C.libusb_exit(ctx)
+			return nil, fmt.Errorf("invalid DJONEHUB_USB_AT_INTERFACE %q", value)
+		}
+		filtered := candidates[:0]
+		for _, candidate := range candidates {
+			if candidate.iface == iface {
+				filtered = append(filtered, candidate)
+			}
+		}
+		candidates = filtered
 	}
 	var lastErr error
 	for _, candidate := range candidates {

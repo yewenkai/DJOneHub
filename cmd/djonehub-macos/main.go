@@ -112,6 +112,9 @@ type app struct {
 	labLoaded      bool
 	labPath        string
 	labLastPersist time.Time
+
+	voiceMu sync.Mutex
+	voice   *voiceService
 }
 
 type usbInterfaceStatus struct {
@@ -358,6 +361,7 @@ func (a *app) installESIMManager(manager *esim.Manager, switchAllowed bool) bool
 }
 
 func serve(instance *app, listen string) {
+	defer instance.stopVoiceService()
 	server := &http.Server{
 		Addr:              listen,
 		Handler:           instance.routes(),
@@ -767,6 +771,13 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/network/check-proxy", a.checkProxyRoute)
 	mux.HandleFunc("POST /api/network/usbnet", a.setUSBNetMode)
 	mux.HandleFunc("POST /api/network/reboot-module", a.rebootModule)
+	mux.HandleFunc("GET /api/voice", a.voiceStatus)
+	mux.HandleFunc("GET /api/voice/calls", a.voiceCalls)
+	mux.HandleFunc("POST /api/voice/dial", a.voiceDial)
+	mux.HandleFunc("POST /api/voice/answer", a.voiceAnswer)
+	mux.HandleFunc("POST /api/voice/hangup", a.voiceHangup)
+	mux.HandleFunc("POST /api/voice/audio/start", a.voiceAudioStart)
+	mux.HandleFunc("POST /api/voice/audio/stop", a.voiceAudioStop)
 	mux.HandleFunc("GET /api/esim", a.esimOverview)
 	mux.HandleFunc("GET /api/esim/notes", a.listESIMNotes)
 	mux.HandleFunc("PUT /api/esim/notes", a.saveESIMNote)

@@ -19,3 +19,4 @@
 # Frontend dependencies are not used by the native DJOneHub page
 node_modules/
 
+.playwright-cli/

@@ -52,6 +52,7 @@
 
     <nav class="task-nav" aria-label="功能导航">
       <button class="tab active" data-view="sms"><span>短信</span><small>收件箱</small></button>
+      <button class="tab" data-view="voice"><span>通话</span><small>VoLTE 实验</small></button>
       <button class="tab" data-view="esim"><span>eSIM/卡片</span><small>Profile</small></button>
       <button class="tab" data-view="network"><span>网络</span><small>4G USB</small></button>
       <button class="tab" data-view="at"><span>AT 调试</span><small>诊断</small></button>
@@ -73,6 +74,26 @@
       </div>
       <p id="sms-status" class="inline-status">尚未读取短信</p>
       <div id="sms-list" class="list empty">暂无短信</div>
+    </section>
+
+    <section id="voice" class="view">
+      <div class="view-intro"><div><span class="section-kicker">VOLTE AUDIO LAB</span><h2>通话中心</h2></div><p>模块负责 VoLTE，Mac 负责呼叫控制与 USB 音频桥接。</p></div>
+      <form id="call-form" class="toolbar call-toolbar">
+        <input id="call-number" type="tel" placeholder="电话号码，例如 10086" autocomplete="tel" required>
+        <label class="call-audio-option"><input id="call-with-audio" type="checkbox" checked> 同时启用 Mac 音频</label>
+        <button type="submit">拨打</button>
+      </form>
+      <div class="control-panel call-actions">
+        <button id="call-answer" class="secondary" type="button">接听</button>
+        <button id="call-hangup" class="secondary danger" type="button">挂断</button>
+        <button id="voice-audio-start" class="secondary" type="button">启动音频桥</button>
+        <button id="voice-audio-stop" class="secondary" type="button">停止音频桥</button>
+      </div>
+      <p id="voice-status" class="inline-status">正在检查 VoLTE 与 USB Audio...</p>
+      <div id="voice-audio-grid" class="diagnostic-grid"></div>
+      <h2 class="subheading">当前通话</h2>
+      <div id="voice-calls" class="list empty">当前没有语音通话</div>
+      <p class="inline-status">实验功能：请优先使用耳机，避免扬声器声音被麦克风再次送回通话。紧急呼叫不在本功能测试范围内。</p>
     </section>
 
     <section id="esim" class="view">
