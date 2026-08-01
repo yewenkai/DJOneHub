@@ -25,8 +25,8 @@
         <button class="theme-option" type="button" data-theme-option="dark" aria-pressed="false">深色</button>
         <button class="theme-option" type="button" data-theme-option="auto" aria-pressed="true">自动</button>
       </div>
-      <button id="workmode-sms" class="secondary compact" type="button">短信模式</button>
-      <button id="workmode-network" class="secondary compact" type="button">上网模式</button>
+      <button id="workmode-sms" class="secondary compact" type="button">管理兼容模式</button>
+      <button id="workmode-network" class="secondary compact" type="button">日常模式</button>
       <button id="refresh" class="compact icon-button" title="刷新状态" aria-label="刷新状态">↻</button>
     </div>
   </header>
@@ -186,13 +186,13 @@
       <div id="network-checks" class="list empty">尚未检测</div>
       <h2 class="subheading">USB 网卡模式</h2>
       <div class="control-panel">
-        <button id="usbnet-mode-0" class="secondary" type="button">模式 0 · 短信/管理</button>
-        <button id="usbnet-mode-1" class="secondary" type="button">模式 1 · 4G 网卡</button>
+        <button id="usbnet-mode-0" class="secondary" type="button">模式 0 · 管理兼容</button>
+        <button id="usbnet-mode-1" class="secondary" type="button">模式 1 · 上网 + 短信</button>
         <button id="usbnet-mode-2" class="secondary" type="button">模式 2 · 实验</button>
         <button id="usbnet-mode-3" class="secondary" type="button">模式 3 · 实验</button>
         <button id="reboot-module" class="secondary danger" type="button">重启模块</button>
       </div>
-      <p class="inline-status">模式 0 适合短信和 AT 管理；模式 1 是目前确认可用的 USB 网卡模式。切换 usbnet 后通常需要重启模块。</p>
+      <p class="inline-status">模式 1 已真机确认可同时使用 USB 网卡、短信、AT 与 eSIM 管理，建议日常保持此模式。模式 0 仅用于兼容性排查。切换 usbnet 后才需要重启模块。</p>
       <h2 class="subheading">macOS 网络接口</h2>
       <div id="network-interfaces" class="list empty">尚未读取接口</div>
     </section>

@@ -203,8 +203,8 @@ function displayWorkMode(value) {
 	  return { label: "待读取", tone: "muted" };
 	}
   switch (Number(value)) {
-    case 0: return { label: "短信模式", tone: "info" };
-    case 1: return { label: "上网模式", tone: "info" };
+    case 0: return { label: "管理兼容模式", tone: "info" };
+    case 1: return { label: "日常模式 · 上网+短信", tone: "good" };
     case 2: return { label: "实验模式 2", tone: "warn" };
     case 3: return { label: "实验模式 3", tone: "warn" };
     default: return { label: "待读取", tone: "muted" };
@@ -236,6 +236,14 @@ async function loadStatus() {
       ? displayWorkMode(status.usbnet_mode)
       : displayWorkMode(null);
     setValue("#work-mode", workMode.label, workMode.tone);
+    const workModeStatus = $("#workmode-status");
+    if (Number(status.usbnet_mode) === 1) {
+      workModeStatus.hidden = false;
+      workModeStatus.textContent = "日常模式已开启：4G USB 网卡与短信后台轮询可同时工作，无需为收短信切换模式。";
+    } else if (!workModeStatus.textContent.includes("正在")) {
+      workModeStatus.hidden = false;
+      workModeStatus.textContent = "当前为管理兼容模式；需要日常上网时可切换到模式 1，短信与 AT 管理仍会保留。";
+    }
     $("#device-summary").textContent =
       status.hardware_status || [status.imei, status.firmware].filter(Boolean).join(" · ") || "模块初始化中";
     renderHardwareDetails(status);
@@ -1544,9 +1552,9 @@ $("#lab-speed-test").addEventListener("click", async () => {
   }
 });
 $("#workmode-sms").addEventListener("click", () =>
-  switchWorkMode(0, "短信模式", $("#workmode-sms")));
+  switchWorkMode(0, "管理兼容模式", $("#workmode-sms")));
 $("#workmode-network").addEventListener("click", () =>
-  switchWorkMode(1, "上网模式", $("#workmode-network")));
+  switchWorkMode(1, "日常模式（上网 + 短信）", $("#workmode-network")));
 $("#check-4g-route").addEventListener("click", () =>
   runNetworkCheck("4G 出口", "/api/network/check-4g", $("#check-4g-route")));
 $("#check-proxy-route").addEventListener("click", () =>
