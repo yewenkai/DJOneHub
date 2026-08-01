@@ -125,6 +125,37 @@ type usbDeviceStatus struct {
 	Interfaces []usbInterfaceStatus `json:"interfaces"`
 }
 
+type usbDeviceIdentity struct {
+	VendorID       int
+	ProductID      int
+	DefaultVendor  string
+	DefaultProduct string
+}
+
+var supportedUSBDeviceIdentities = []usbDeviceIdentity{
+	{
+		VendorID:       0x2ca3,
+		ProductID:      0x4006,
+		DefaultVendor:  "DJI",
+		DefaultProduct: "DJI 4G Module",
+	},
+	{
+		VendorID:       0x2c7c,
+		ProductID:      0x0125,
+		DefaultVendor:  "Quectel",
+		DefaultProduct: "DJI 4G Module (Quectel mode)",
+	},
+}
+
+func supportedUSBDeviceIdentity(vendorID, productID int) (usbDeviceIdentity, bool) {
+	for _, identity := range supportedUSBDeviceIdentities {
+		if identity.VendorID == vendorID && identity.ProductID == productID {
+			return identity, true
+		}
+	}
+	return usbDeviceIdentity{}, false
+}
+
 type networkDiagnostic struct {
 	USBNetMode        string            `json:"usbnet_mode"`
 	USBCfg            string            `json:"usbcfg"`
@@ -422,15 +453,24 @@ func discoverDJIUSBDevice() *usbDeviceStatus {
 	if err != nil {
 		return nil
 	}
+	return parseDJIUSBDevice(string(out))
+}
 
+func parseDJIUSBDevice(out string) *usbDeviceStatus {
 	var device *usbDeviceStatus
-	for _, block := range strings.Split(string(out), "\n\n") {
+	var selectedVendorID, selectedProductID, selectedLocationID int
+	for _, block := range strings.Split(out, "\n\n") {
 		vendorID, okVendor := intProperty(block, "idVendor")
 		productID, okProduct := intProperty(block, "idProduct")
-		if !okVendor || !okProduct || vendorID != 0x2ca3 {
+		identity, supported := supportedUSBDeviceIdentity(vendorID, productID)
+		if !okVendor || !okProduct || !supported {
 			continue
 		}
+		locationID, _ := intProperty(block, "locationID")
 		if device == nil {
+			selectedVendorID = vendorID
+			selectedProductID = productID
+			selectedLocationID = locationID
 			device = &usbDeviceStatus{
 				Product:    stringProperty(block, "USB Product Name"),
 				Vendor:     stringProperty(block, "USB Vendor Name"),
@@ -441,11 +481,14 @@ func discoverDJIUSBDevice() *usbDeviceStatus {
 				Mode:       "vendor-specific USB mode",
 			}
 			if strings.TrimSpace(device.Product) == "" {
-				device.Product = "DJI 4G Module"
+				device.Product = identity.DefaultProduct
 			}
 			if strings.TrimSpace(device.Vendor) == "" {
-				device.Vendor = "DJI"
+				device.Vendor = identity.DefaultVendor
 			}
+		} else if vendorID != selectedVendorID || productID != selectedProductID ||
+			(selectedLocationID != 0 && locationID != 0 && locationID != selectedLocationID) {
+			continue
 		}
 		ifaceNumber, okIface := intProperty(block, "bInterfaceNumber")
 		if !okIface {

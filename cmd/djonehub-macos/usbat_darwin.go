@@ -18,14 +18,11 @@ import (
 	"unsafe"
 )
 
-const (
-	djiUSBVendorID  = 0x2ca3
-	djiUSBProductID = 0x4006
-)
-
 type usbAT struct {
 	ctx         *C.libusb_context
 	handle      *C.libusb_device_handle
+	vendorID    int
+	productID   int
 	iface       int
 	endpointIn  byte
 	endpointOut byte
@@ -43,10 +40,18 @@ func openDJIUSBAT() (*usbAT, error) {
 	if rc := C.libusb_init(&ctx); rc != 0 {
 		return nil, fmt.Errorf("libusb init: %s", usbErrorName(rc))
 	}
-	handle := C.libusb_open_device_with_vid_pid(ctx, djiUSBVendorID, djiUSBProductID)
+	var handle *C.libusb_device_handle
+	var identity usbDeviceIdentity
+	for _, candidate := range supportedUSBDeviceIdentities {
+		handle = C.libusb_open_device_with_vid_pid(ctx, C.uint16_t(candidate.VendorID), C.uint16_t(candidate.ProductID))
+		if handle != nil {
+			identity = candidate
+			break
+		}
+	}
 	if handle == nil {
 		C.libusb_exit(ctx)
-		return nil, errors.New("DJI USB AT device 2ca3:4006 not found")
+		return nil, errors.New("DJI USB AT device not found (supported identities: 2ca3:4006, 2c7c:0125)")
 	}
 	candidates, err := usbATCandidates(handle)
 	if err != nil {
@@ -63,6 +68,8 @@ func openDJIUSBAT() (*usbAT, error) {
 		dev := &usbAT{
 			ctx:         ctx,
 			handle:      handle,
+			vendorID:    identity.VendorID,
+			productID:   identity.ProductID,
 			iface:       candidate.iface,
 			endpointIn:  candidate.endpointIn,
 			endpointOut: candidate.endpointOut,
@@ -295,8 +302,8 @@ func (u *usbAT) Description() string {
 	if u == nil {
 		return "USB AT"
 	}
-	return fmt.Sprintf("USB AT · 2ca3:4006 interface %d out 0x%02x in 0x%02x",
-		u.iface, u.endpointOut, u.endpointIn)
+	return fmt.Sprintf("USB AT · %04x:%04x interface %d out 0x%02x in 0x%02x",
+		u.vendorID, u.productID, u.iface, u.endpointOut, u.endpointIn)
 }
 
 func (u *usbAT) bulkWriteLocked(endpoint byte, payload []byte, timeout time.Duration) error {

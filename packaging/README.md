@@ -1,6 +1,6 @@
 # DJOneHub for macOS（Apple Silicon）
 
-适用于搭载 Apple M 系列芯片的 Mac，以及大疆一代 4G 模块（USB `2ca3:4006`）。
+适用于搭载 Apple M 系列芯片的 Mac，以及大疆一代 4G 模块（原始 USB `2ca3:4006`，或已转换为移远身份的 `2c7c:0125`）。
 
 ## 安装（推荐）
 
