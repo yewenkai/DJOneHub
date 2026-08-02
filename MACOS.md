@@ -9,7 +9,8 @@ EG25-G. It does not require UTM for AT-mode management.
 - Modem, SIM, operator, registration and signal status
 - Receive and send SMS through the modem AT port
 - Background call-state cache with missed-call history
-- Native Swift foreground app with incoming-call and SMS notifications
+- Native Swift foreground app with an always-visible 4G menu-bar dashboard,
+  live traffic, route status, recent SMS and call/SMS notifications
 - Execute explicit AT commands
 - USB network diagnostics, asynchronous DHCP repair, traffic counters and cellular history charts
 - Experimental VoLTE call control and macOS audio bridge diagnostics

@@ -19,6 +19,7 @@ enum DJOneHubNotifierMain {
 }
 
 enum SelfTest {
+    @MainActor
     static func run() {
         precondition(NotificationText.displayNumber("  ") == "未知号码")
         let message = SMSMessage(
@@ -36,6 +37,20 @@ enum SelfTest {
         )
         precondition(NotificationText.smsPreview(longMessage, limit: 8) == "第一行 第二行以…")
         precondition(ServerDate.parse("2026-08-02T12:00:00.123456+08:00").timeIntervalSince1970 > 0)
+        precondition(TrafficText.speed(1_048_576) == "1.0 MB/s")
+        let state = AssistantState()
+        state.receivedTraffic(NetworkTraffic(
+            available: true, interface: "en19", rxBytes: 1_000, txBytes: 2_000,
+            sessionRXBytes: 0, sessionTXBytes: 0, sessionTotalBytes: 0,
+            sampledAtMS: 1_000, error: nil
+        ))
+        state.receivedTraffic(NetworkTraffic(
+            available: true, interface: "en19", rxBytes: 2_024, txBytes: 2_512,
+            sessionRXBytes: 1_024, sessionTXBytes: 512, sessionTotalBytes: 1_536,
+            sampledAtMS: 2_000, error: nil
+        ))
+        precondition(state.downloadBytesPerSecond == 1_024)
+        precondition(state.uploadBytesPerSecond == 512)
         print("DJOneHubNotifier self-test passed")
     }
 }
@@ -52,8 +67,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let backgroundLaunch: Bool
 
     private var mainWindow: NSWindow?
+    private var statusItem: NSStatusItem?
+    private let statusPopover = NSPopover()
     private var callTimer: Timer?
     private var smsTimer: Timer?
+    private var trafficTimer: Timer?
+    private var modemTimer: Timer?
+    private var routeTimer: Timer?
     private var lastActiveCallID: String?
     private var seenCallHistoryIDs = Set<String>()
     private var seenMessageIDs = Set<String>()
@@ -61,6 +81,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var initializedMessages = false
     private var callPollInFlight = false
     private var smsPollInFlight = false
+    private var trafficPollInFlight = false
+    private var modemPollInFlight = false
+    private var routePollInFlight = false
 
     init(arguments: [String]) {
         let baseURL = Self.argumentValue("--base-url", in: arguments)
@@ -95,32 +118,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureApplicationMenu()
         configureApplicationIcon()
         configureMainWindow()
+        configureStatusItem()
         if !backgroundLaunch {
             showMainWindow()
         }
         if let snapshotPath {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
                 guard let self else { return }
                 try? self.saveMainWindowSnapshot(to: URL(fileURLWithPath: snapshotPath))
                 NSApplication.shared.terminate(nil)
             }
         }
 
-        callTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        callTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.pollCalls() }
         }
         smsTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.pollMessages() }
         }
-        Task {
-            await pollCalls()
-            await pollMessages()
+        trafficTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.pollTraffic() }
         }
+        modemTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.pollModemStatus() }
+        }
+        routeTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.pollCellularRoute() }
+        }
+        Task { await pollTraffic() }
+        Task { await pollModemStatus() }
+        Task { await pollCellularRoute() }
+        Task { await pollCalls() }
+        Task { await pollMessages() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         callTimer?.invalidate()
         smsTimer?.invalidate()
+        trafficTimer?.invalidate()
+        modemTimer?.invalidate()
+        routeTimer?.invalidate()
+        statusPopover.performClose(nil)
+        if let statusItem {
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -132,11 +173,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func runHealthCheck() async {
         do {
-            let calls = try await api.callStatus()
+            let traffic = try await api.networkTraffic()
+            let modem = try await api.modemStatus()
             let messages = try await api.messages()
             print(
-                "health-check passed: callPolling=\(calls.polling) " +
-                    "callHistory=\(calls.history?.count ?? 0) smsCount=\(messages.count)"
+                "health-check passed: traffic=\(traffic.available) " +
+                    "network=\(modem.networkMode ?? "--") smsCount=\(messages.count)"
             )
             NSApplication.shared.terminate(nil)
         } catch {
@@ -153,9 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let status: CallStatus
         do {
             status = try await api.callStatus()
-            assistantState.receivedCalls(status)
         } catch {
-            assistantState.backendUnavailable(error)
             return
         }
         let history = status.history ?? []
@@ -196,7 +236,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             messages = try await api.messages()
             assistantState.receivedMessages(messages)
         } catch {
-            assistantState.backendUnavailable(error)
             return
         }
         if !initializedMessages {
@@ -207,6 +246,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let newest = messages.first(where: { !seenMessageIDs.contains($0.identity) }) else { return }
         seenMessageIDs.formUnion(messages.map(\.identity))
         showMessage(newest)
+    }
+
+    private func pollTraffic() async {
+        guard !trafficPollInFlight else { return }
+        trafficPollInFlight = true
+        defer { trafficPollInFlight = false }
+        do {
+            assistantState.receivedTraffic(try await api.networkTraffic())
+            updateStatusItem()
+        } catch {
+            assistantState.backendUnavailable(error)
+            updateStatusItem()
+        }
+    }
+
+    private func pollModemStatus() async {
+        guard !modemPollInFlight else { return }
+        modemPollInFlight = true
+        defer { modemPollInFlight = false }
+        guard let status = try? await api.modemStatus() else { return }
+        assistantState.receivedModem(status)
+        updateStatusItem()
+    }
+
+    private func pollCellularRoute() async {
+        guard !routePollInFlight else { return }
+        routePollInFlight = true
+        defer { routePollInFlight = false }
+        guard let result = try? await api.cellularRoute() else { return }
+        assistantState.receivedRoute(result)
+        updateStatusItem()
     }
 
     private func showIncoming(_ call: CallRecord) {
@@ -266,14 +336,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureMainWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 340),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "DJOneHub 通知助手"
+        window.title = "DJOneHub 蜂窝网络"
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 480, height: 300)
+        window.minSize = NSSize(width: 520, height: 540)
         window.setFrameAutosaveName("DJOneHubNotifierMainWindow")
         window.contentView = NSHostingView(rootView: AssistantHomeView(
             state: assistantState,
@@ -285,8 +355,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showMainWindow() {
+        statusPopover.performClose(nil)
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    private func configureStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: 44)
+        item.autosaveName = "DJOneHubCellularStatus"
+        item.button?.target = self
+        item.button?.action = #selector(toggleStatusPopover)
+        item.button?.imagePosition = .imageOnly
+        statusItem = item
+
+        statusPopover.behavior = .transient
+        statusPopover.animates = true
+        statusPopover.contentSize = NSSize(width: 380, height: 520)
+        statusPopover.contentViewController = NSHostingController(rootView: MenuBarDashboardView(
+            state: assistantState,
+            openDJOneHub: openDJOneHub,
+            showMainWindow: showMainWindow
+        ))
+        updateStatusItem()
+    }
+
+    @objc private func toggleStatusPopover() {
+        guard let button = statusItem?.button else { return }
+        if statusPopover.isShown {
+            statusPopover.performClose(nil)
+        } else {
+            statusPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            NSApplication.shared.activate(ignoringOtherApps: false)
+        }
+    }
+
+    private func updateStatusItem() {
+        statusItem?.button?.image = Self.cellularStatusImage(
+            signalLevel: assistantState.signalLevel,
+            connected: assistantState.backendConnected
+        )
+        statusItem?.button?.toolTip = assistantState.backendConnected
+            ? "\(assistantState.operatorName) · \(assistantState.routeSummary) · ↓ \(TrafficText.speed(assistantState.downloadBytesPerSecond))"
+            : "DJOneHub 后端未连接"
+    }
+
+    private static func cellularStatusImage(signalLevel: Int, connected: Bool) -> NSImage {
+        let image = NSImage(size: NSSize(width: 42, height: 18))
+        image.lockFocus()
+        let active = NSColor.black
+        let inactive = NSColor.black.withAlphaComponent(connected ? 0.26 : 0.14)
+        for (index, height) in [4.2, 7.4, 10.6, 13.8].enumerated() {
+            (index < signalLevel ? active : inactive).setFill()
+            NSBezierPath(
+                roundedRect: NSRect(x: CGFloat(index) * 5.2, y: 1, width: 3.6, height: height),
+                xRadius: 0.9,
+                yRadius: 0.9
+            ).fill()
+        }
+        (connected ? active : inactive).set()
+        ("4G" as NSString).draw(
+            at: NSPoint(x: 24, y: 3),
+            withAttributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
+                .foregroundColor: connected ? active : inactive,
+            ]
+        )
+        image.unlockFocus()
+        image.isTemplate = true
+        image.accessibilityDescription = connected
+            ? "DJOneHub 4G 信号 \(signalLevel) 格"
+            : "DJOneHub 后端未连接"
+        return image
     }
 
     private func saveMainWindowSnapshot(to url: URL) throws {

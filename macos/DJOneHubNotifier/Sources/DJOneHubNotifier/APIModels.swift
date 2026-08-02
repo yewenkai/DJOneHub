@@ -48,6 +48,52 @@ struct OKResponse: Codable, Sendable {
     let ok: Bool
 }
 
+struct ModemStatus: Codable, Sendable {
+    let operatorName: String?
+    let signalDBM: Int?
+    let networkMode: String?
+    let radioBand: String?
+    let radioChannel: Int?
+    let simInserted: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case operatorName = "operator"
+        case signalDBM = "signal_dbm"
+        case networkMode = "network_mode"
+        case radioBand = "radio_band"
+        case radioChannel = "radio_channel"
+        case simInserted = "sim_inserted"
+    }
+}
+
+struct NetworkTraffic: Codable, Sendable {
+    let available: Bool
+    let interface: String?
+    let rxBytes: UInt64
+    let txBytes: UInt64
+    let sessionRXBytes: UInt64
+    let sessionTXBytes: UInt64
+    let sessionTotalBytes: UInt64
+    let sampledAtMS: Int64
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case available, interface, error
+        case rxBytes = "rx_bytes"
+        case txBytes = "tx_bytes"
+        case sessionRXBytes = "session_rx_bytes"
+        case sessionTXBytes = "session_tx_bytes"
+        case sessionTotalBytes = "session_total_bytes"
+        case sampledAtMS = "sampled_at_ms"
+    }
+}
+
+struct NetworkCheckResult: Codable, Sendable {
+    let ok: Bool
+    let summary: String
+    let detail: String
+}
+
 enum APIError: LocalizedError {
     case invalidResponse
     case http(Int)
@@ -73,6 +119,18 @@ struct DJOneHubAPI: Sendable {
         try await get(path: "api/sms")
     }
 
+    func modemStatus() async throws -> ModemStatus {
+        try await get(path: "api/status")
+    }
+
+    func networkTraffic() async throws -> NetworkTraffic {
+        try await get(path: "api/network/traffic")
+    }
+
+    func cellularRoute() async throws -> NetworkCheckResult {
+        try await post(path: "api/network/check-4g")
+    }
+
     func hangup() async throws -> OKResponse {
         var request = URLRequest(url: baseURL.appendingPathComponent("api/voice/hangup"))
         request.httpMethod = "POST"
@@ -90,6 +148,21 @@ struct DJOneHubAPI: Sendable {
 
     private func get<T: Decodable & Sendable>(path: String) async throws -> T {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 5
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw APIError.http(http.statusCode)
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func post<T: Decodable & Sendable>(path: String) async throws -> T {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = "POST"
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 5
         let (data, response) = try await URLSession.shared.data(for: request)
