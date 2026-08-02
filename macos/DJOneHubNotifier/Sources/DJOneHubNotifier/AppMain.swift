@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 @main
 enum DJOneHubNotifierMain {
@@ -12,7 +13,7 @@ enum DJOneHubNotifierMain {
         let app = NSApplication.shared
         let delegate = AppDelegate(arguments: CommandLine.arguments)
         app.delegate = delegate
-        app.setActivationPolicy(.accessory)
+        app.setActivationPolicy(CommandLine.arguments.contains("--health-check") ? .accessory : .regular)
         app.run()
     }
 }
@@ -44,10 +45,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let api: DJOneHubAPI
     private let webURL: URL
     private let panel = NotifierPanel()
+    private let assistantState = AssistantState()
     private let previewMode: String?
     private let snapshotPath: String?
     private let healthCheck: Bool
+    private let backgroundLaunch: Bool
 
+    private var mainWindow: NSWindow?
     private var callTimer: Timer?
     private var smsTimer: Timer?
     private var lastActiveCallID: String?
@@ -67,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         previewMode = Self.argumentValue("--preview", in: arguments)
         snapshotPath = Self.argumentValue("--snapshot", in: arguments)
         healthCheck = arguments.contains("--health-check")
+        backgroundLaunch = arguments.contains("--background")
         super.init()
     }
 
@@ -87,6 +92,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        configureApplicationMenu()
+        configureApplicationIcon()
+        configureMainWindow()
+        if !backgroundLaunch {
+            showMainWindow()
+        }
+        if let snapshotPath {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                guard let self else { return }
+                try? self.saveMainWindowSnapshot(to: URL(fileURLWithPath: snapshotPath))
+                NSApplication.shared.terminate(nil)
+            }
+        }
+
         callTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.pollCalls() }
         }
@@ -102,6 +121,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         callTimer?.invalidate()
         smsTimer?.invalidate()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            showMainWindow()
+        }
+        return true
     }
 
     private func runHealthCheck() async {
@@ -124,7 +150,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         callPollInFlight = true
         defer { callPollInFlight = false }
 
-        guard let status = try? await api.callStatus() else { return }
+        let status: CallStatus
+        do {
+            status = try await api.callStatus()
+            assistantState.receivedCalls(status)
+        } catch {
+            assistantState.backendUnavailable(error)
+            return
+        }
         let history = status.history ?? []
         if !initializedCalls {
             initializedCalls = true
@@ -158,7 +191,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         smsPollInFlight = true
         defer { smsPollInFlight = false }
 
-        guard let messages = try? await api.messages() else { return }
+        let messages: [SMSMessage]
+        do {
+            messages = try await api.messages()
+            assistantState.receivedMessages(messages)
+        } catch {
+            assistantState.backendUnavailable(error)
+            return
+        }
         if !initializedMessages {
             initializedMessages = true
             seenMessageIDs = Set(messages.map(\.identity))
@@ -222,6 +262,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openDJOneHub() {
         NSWorkspace.shared.open(webURL)
+    }
+
+    private func configureMainWindow() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 340),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "DJOneHub 通知助手"
+        window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: 480, height: 300)
+        window.setFrameAutosaveName("DJOneHubNotifierMainWindow")
+        window.contentView = NSHostingView(rootView: AssistantHomeView(
+            state: assistantState,
+            openDJOneHub: openDJOneHub,
+            hideWindow: { [weak window] in window?.orderOut(nil) }
+        ))
+        window.center()
+        mainWindow = window
+    }
+
+    private func showMainWindow() {
+        mainWindow?.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    private func saveMainWindowSnapshot(to url: URL) throws {
+        guard let view = mainWindow?.contentView else { return }
+        view.layoutSubtreeIfNeeded()
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return }
+        try data.write(to: url, options: .atomic)
+    }
+
+    private func configureApplicationIcon() {
+        guard let symbol = NSImage(
+            systemSymbolName: "antenna.radiowaves.left.and.right.circle.fill",
+            accessibilityDescription: "DJOneHub 通知助手"
+        ) else { return }
+        symbol.size = NSSize(width: 128, height: 128)
+        NSApplication.shared.applicationIconImage = symbol
+    }
+
+    private func configureApplicationMenu() {
+        let mainMenu = NSMenu()
+        let appItem = NSMenuItem()
+        mainMenu.addItem(appItem)
+
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "关于 DJOneHub 通知助手", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "退出 DJOneHub 通知助手", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        NSApplication.shared.mainMenu = mainMenu
     }
 
     private func showPreview(_ mode: String) {

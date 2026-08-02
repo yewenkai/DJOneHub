@@ -6,14 +6,13 @@
 	<string>com.yewenkai.djonehub-notifier</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/sh</string>
-		<string>-c</string>
-		<string>exec "$HOME/Library/Application Support/DJOneHub/notifier/DJOneHubNotifier.app/Contents/MacOS/DJOneHubNotifier"</string>
+		<string>/Applications/DJOneHub 通知助手.app/Contents/MacOS/DJOneHubNotifier</string>
+		<string>--background</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<true/>
+	<false/>
 	<key>ProcessType</key>
 	<string>Interactive</string>
 	<key>LimitLoadToSessionType</key>

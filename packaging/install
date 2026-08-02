@@ -22,7 +22,7 @@ else
 fi
 LOGIN_UID=$(id -u "${LOGIN_USER}")
 LOGIN_HOME=$(dscl . -read "/Users/${LOGIN_USER}" NFSHomeDirectory | awk '{print $2}')
-NOTIFIER_DIR="${LOGIN_HOME}/Library/Application Support/DJOneHub/notifier"
+NOTIFIER_APP="/Applications/DJOneHub 通知助手.app"
 LAUNCH_AGENTS_DIR="${LOGIN_HOME}/Library/LaunchAgents"
 NOTIFIER_PLIST="${LAUNCH_AGENTS_DIR}/${NOTIFIER_LABEL}.plist"
 
@@ -73,9 +73,9 @@ run_privileged chmod 755 "${INSTALL_DIR}/djonehub" "${INSTALL_DIR}/bin/djonehub-
 run_privileged ln -sfn "${INSTALL_DIR}/djonehub" "${COMMAND_PATH}"
 
 launchctl_as_login_user bootout "gui/${LOGIN_UID}/${NOTIFIER_LABEL}" >/dev/null 2>&1 || true
-run_as_login_user mkdir -p "${NOTIFIER_DIR}" "${LAUNCH_AGENTS_DIR}"
-run_as_login_user ditto --norsrc --noextattr --noqtn --noacl \
-  "${PACKAGE_DIR}/notifier/DJOneHubNotifier.app" "${NOTIFIER_DIR}/DJOneHubNotifier.app"
+run_privileged ditto --norsrc --noextattr --noqtn --noacl \
+  "${PACKAGE_DIR}/notifier/DJOneHubNotifier.app" "${NOTIFIER_APP}"
+run_as_login_user mkdir -p "${LAUNCH_AGENTS_DIR}"
 run_as_login_user cp "${PACKAGE_DIR}/notifier/${NOTIFIER_LABEL}.plist" "${NOTIFIER_PLIST}"
 run_as_login_user chmod 644 "${NOTIFIER_PLIST}"
 launchctl_as_login_user bootstrap "gui/${LOGIN_UID}" "${NOTIFIER_PLIST}"
@@ -83,7 +83,7 @@ launchctl_as_login_user bootstrap "gui/${LOGIN_UID}" "${NOTIFIER_PLIST}"
 echo
 echo "DJOneHub 安装完成。现在可以在任意目录执行："
 echo "  djonehub start"
-echo "原生来电和短信通知助手已为 ${LOGIN_USER} 启动。"
+echo "DJOneHub 通知助手已安装到 ${NOTIFIER_APP}，并为 ${LOGIN_USER} 启动。"
 echo
 echo "停止程序："
 echo "  djonehub stop"
