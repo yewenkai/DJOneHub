@@ -10,6 +10,17 @@ enum DJOneHubNotifierMain {
             SelfTest.run()
             return
         }
+        let utilityLaunch = CommandLine.arguments.contains("--health-check") ||
+            CommandLine.arguments.contains("--snapshot") ||
+            CommandLine.arguments.contains("--preview")
+        if !utilityLaunch,
+           let bundleIdentifier = Bundle.main.bundleIdentifier,
+           let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+               .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier })
+        {
+            existing.activate(options: [.activateAllWindows])
+            return
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate(arguments: CommandLine.arguments)
         app.delegate = delegate

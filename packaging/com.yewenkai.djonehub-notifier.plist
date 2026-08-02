@@ -6,7 +6,10 @@
 	<string>com.yewenkai.djonehub-notifier</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Applications/DJOneHub 通知助手.app/Contents/MacOS/DJOneHubNotifier</string>
+		<string>/usr/bin/open</string>
+		<string>-gj</string>
+		<string>/Applications/DJOneHub 通知助手.app</string>
+		<string>--args</string>
 		<string>--background</string>
 	</array>
 	<key>RunAtLoad</key>
