@@ -17,6 +17,7 @@ final class AssistantState: ObservableObject {
     @Published var sessionRXBytes: UInt64 = 0
     @Published var sessionTXBytes: UInt64 = 0
     @Published var sessionTotalBytes: UInt64 = 0
+    @Published var trafficQuota: TrafficQuota?
     @Published var messages: [SMSMessage] = []
     @Published var lastUpdate: Date?
     @Published var lastError = "等待连接本地后端"
@@ -69,6 +70,12 @@ final class AssistantState: ObservableObject {
         lastUpdate = Date()
     }
 
+    func receivedQuota(_ quota: TrafficQuota) {
+        backendConnected = true
+        trafficQuota = quota
+        lastUpdate = Date()
+    }
+
     func receivedRoute(_ result: NetworkCheckResult) {
         backendConnected = true
         usingCellularRoute = result.ok
@@ -107,6 +114,7 @@ struct AssistantHomeView: View {
                 NetworkDashboardHeader(state: state)
                 LiveSpeedView(state: state)
                 SessionTrafficView(state: state)
+                MonthlyQuotaView(state: state)
                 NetworkDetailView(state: state)
                 RecentMessagesView(messages: state.messages, limit: 5)
                 HStack {
@@ -134,6 +142,7 @@ struct MenuBarDashboardView: View {
                 NetworkDashboardHeader(state: state)
                 LiveSpeedView(state: state)
                 SessionTrafficView(state: state)
+                MonthlyQuotaView(state: state)
                 NetworkDetailView(state: state)
                 RecentMessagesView(messages: state.messages, limit: 3)
                 Divider()
@@ -249,6 +258,68 @@ private struct SessionTrafficView: View {
     }
 }
 
+private struct MonthlyQuotaView: View {
+    @ObservedObject var state: AssistantState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text("本月流量").font(.headline)
+                Spacer()
+                Text(sourceText).font(.caption).foregroundStyle(.secondary)
+            }
+            if let quota = state.trafficQuota {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("剩余").font(.caption).foregroundStyle(.secondary)
+                        Text(TrafficText.quotaBytes(quota.remainingBytes))
+                            .font(.system(size: 20, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.blue)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text("已用").font(.caption).foregroundStyle(.secondary)
+                        Text((quota.usedKnown ? "" : "本机 ") + TrafficText.quotaBytes(quota.usedBytes))
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    }
+                }
+                ProgressView(value: progress(quota))
+                    .tint(.blue)
+                HStack {
+                    Text("套餐 \(TrafficText.quotaBytes(quota.planTotalBytes))")
+                    if quota.rolloverBytes > 0 {
+                        Text("含结转 \(TrafficText.quotaBytes(quota.rolloverBytes))")
+                    }
+                    Spacer()
+                    if quota.partialEstimate {
+                        Text("仅统计本机启动后的 4G 流量")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            } else {
+                Text("正在读取月度流量…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var sourceText: String {
+        guard let quota = state.trafficQuota else { return "--" }
+        if quota.source == "operator_sms" { return "10099 已校准" }
+        if quota.source == "manual" { return quota.partialEstimate ? "部分手动校准" : "手动校准" }
+        return "本机估算"
+    }
+
+    private func progress(_ quota: TrafficQuota) -> Double {
+        guard quota.planTotalBytes > 0 else { return 0 }
+        return min(1, Double(quota.usedBytes) / Double(quota.planTotalBytes))
+    }
+}
+
 private struct NetworkDetailView: View {
     @ObservedObject var state: AssistantState
 
@@ -333,6 +404,15 @@ enum TrafficText {
 
     static func bytes(_ value: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(clamping: value), countStyle: .file)
+    }
+
+    static func quotaBytes(_ value: UInt64) -> String {
+        let gib = Double(value) / 1_073_741_824
+        if gib >= 1 {
+            return String(format: gib.rounded() == gib ? "%.0f GB" : "%.2f GB", gib)
+        }
+        let mib = Double(value) / 1_048_576
+        return String(format: mib >= 10 ? "%.0f MB" : "%.1f MB", mib)
     }
 }
 

@@ -83,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var callTimer: Timer?
     private var smsTimer: Timer?
     private var trafficTimer: Timer?
+    private var quotaTimer: Timer?
     private var modemTimer: Timer?
     private var routeTimer: Timer?
     private var lastActiveCallID: String?
@@ -93,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var callPollInFlight = false
     private var smsPollInFlight = false
     private var trafficPollInFlight = false
+    private var quotaPollInFlight = false
     private var modemPollInFlight = false
     private var routePollInFlight = false
 
@@ -150,6 +152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         trafficTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.pollTraffic() }
         }
+        quotaTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.pollTrafficQuota() }
+        }
         modemTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.pollModemStatus() }
         }
@@ -157,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in await self?.pollCellularRoute() }
         }
         Task { await pollTraffic() }
+        Task { await pollTrafficQuota() }
         Task { await pollModemStatus() }
         Task { await pollCellularRoute() }
         Task { await pollCalls() }
@@ -167,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         callTimer?.invalidate()
         smsTimer?.invalidate()
         trafficTimer?.invalidate()
+        quotaTimer?.invalidate()
         modemTimer?.invalidate()
         routeTimer?.invalidate()
         statusPopover.performClose(nil)
@@ -270,6 +277,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             assistantState.backendUnavailable(error)
             updateStatusItem()
         }
+    }
+
+    private func pollTrafficQuota() async {
+        guard !quotaPollInFlight else { return }
+        quotaPollInFlight = true
+        defer { quotaPollInFlight = false }
+        guard let quota = try? await api.trafficQuota() else { return }
+        assistantState.receivedQuota(quota)
     }
 
     private func pollModemStatus() async {

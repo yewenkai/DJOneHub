@@ -139,6 +139,11 @@ input:focus { border-color: #6698ed; box-shadow: 0 0 0 3px rgba(77, 130, 232, .1
 .call-audio-option { display: inline-flex; min-height: 40px; align-items: center; gap: 8px; color: var(--text-muted, #718096); font-size: 13px; white-space: nowrap; }
 .call-audio-option input { width: 16px; min-height: 16px; margin: 0; accent-color: #2563eb; }
 .call-actions { margin: 12px 0 4px; }
+.quota-config-form { display: grid; grid-template-columns: repeat(2, 1fr) repeat(2, 1.2fr) 1.4fr auto auto; gap: 10px; align-items: end; margin-top: 13px; }
+.quota-config-form label { display: grid; gap: 6px; color: var(--text-muted); font-size: 12px; font-weight: 650; }
+.quota-config-form input { min-height: 38px; }
+.quota-config-form .quota-checkbox { display: flex; min-height: 40px; align-items: center; gap: 7px; white-space: nowrap; }
+.quota-config-form .quota-checkbox input { width: 16px; min-height: 16px; margin: 0; accent-color: #2563eb; }
 .range-control { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; font-weight: 650; }
 .range-control select { min-height: 36px; padding: 0 32px 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-strong); }
 
@@ -178,6 +183,10 @@ input:focus { border-color: #6698ed; box-shadow: 0 0 0 3px rgba(77, 130, 232, .1
 .item time, .item small { color: #7b8797; }
 .item p { color: #3e4c60; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sms-actions { justify-content: flex-end; min-width: 0; }
+
+@media (max-width: 900px) {
+  .quota-config-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .code-badge { padding: 5px 8px; border: 1px solid #9bd0aa; border-radius: 5px; background: #edf9f0; color: #16743b; font-size: 12px; font-weight: 750; white-space: nowrap; }
 
 .check-item.ok small { color: #16833a; }

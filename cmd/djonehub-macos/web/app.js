@@ -3,6 +3,7 @@ let lastSMSCount = null;
 let networkTrafficTimer = null;
 let networkTrafficPrevious = null;
 let networkTrafficInFlight = false;
+let trafficQuotaInFlight = false;
 let cellularLabTimer = null;
 let cellularLabSamples = [];
 let cellularLabInFlight = false;
@@ -824,6 +825,44 @@ function formatTrafficBytes(value) {
   return `${amount.toFixed(digits)} ${units[unit]}`;
 }
 
+function trafficGB(value) {
+  return (Number(value || 0) / (1024 ** 3)).toFixed(2).replace(/\.00$/, "");
+}
+
+async function loadTrafficQuota(updateForm = false) {
+  if (trafficQuotaInFlight) return;
+  trafficQuotaInFlight = true;
+  try {
+    const quota = await api("/api/network/quota");
+    const source = quota.source === "operator_sms"
+      ? "10099 运营商短信"
+      : quota.source === "manual" ? "手动校准" : "本机网卡估算";
+    const detail = quota.partial_estimate
+      ? `从 ${new Date(quota.tracking_started_at).toLocaleString()} 开始统计，无法补回此前用量`
+      : `最近校准 ${new Date(quota.last_calibration_at).toLocaleString()}`;
+    $("#quota-grid").replaceChildren(
+      diagnosticCard("本月剩余", formatTrafficBytes(quota.remaining_bytes), source),
+      diagnosticCard("本月已用", formatTrafficBytes(quota.used_bytes), quota.used_known ? detail : `本机累计口径 · ${detail}`),
+      diagnosticCard("套餐总量", formatTrafficBytes(quota.plan_total_bytes), `基础 ${formatTrafficBytes(quota.base_quota_bytes)} · 结转 ${formatTrafficBytes(quota.rollover_bytes)}`),
+    );
+    const queryState = quota.query_configured
+      ? (quota.auto_query ? "每日自动校准已开启" : "已配置查询指令，仅手动查询")
+      : "尚无可用的 10099 查询指令，自动发送保持关闭";
+    $("#quota-status").textContent = `${source} · 本机累计 ${formatTrafficBytes(quota.local_tracked_bytes)} · ${queryState}`;
+    if (updateForm || !$("#quota-config-form").contains(document.activeElement)) {
+      $("#quota-base").value = trafficGB(quota.base_quota_bytes);
+      $("#quota-rollover").value = trafficGB(quota.rollover_bytes);
+      $("#quota-command").value = quota.query_command || "";
+      $("#quota-auto").checked = Boolean(quota.auto_query);
+    }
+    $("#quota-query").disabled = !quota.query_configured;
+  } catch (error) {
+    $("#quota-status").textContent = `读取月度流量失败：${error.message}`;
+  } finally {
+    trafficQuotaInFlight = false;
+  }
+}
+
 async function loadNetworkTraffic() {
   if (networkTrafficInFlight) return;
   networkTrafficInFlight = true;
@@ -1144,12 +1183,53 @@ $("#usbnet-mode-1").addEventListener("click", () => setUSBNetMode(1));
 $("#usbnet-mode-2").addEventListener("click", () => setUSBNetMode(2));
 $("#usbnet-mode-3").addEventListener("click", () => setUSBNetMode(3));
 $("#reboot-module").addEventListener("click", rebootModule);
+$("#quota-config-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    await api("/api/network/quota/config", {
+      method: "POST",
+      body: JSON.stringify({
+        base_quota_gb: Number($("#quota-base").value),
+        rollover_gb: Number($("#quota-rollover").value),
+        query_command: $("#quota-command").value.trim(),
+        auto_query: $("#quota-auto").checked,
+        manual_used_gb: $("#quota-manual-used").value === "" ? null : Number($("#quota-manual-used").value),
+        manual_remaining_gb: $("#quota-manual-remaining").value === "" ? null : Number($("#quota-manual-remaining").value),
+      }),
+    });
+    await loadTrafficQuota(true);
+    $("#quota-manual-used").value = "";
+    $("#quota-manual-remaining").value = "";
+    notice("月度流量设置已保存");
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#quota-query").addEventListener("click", async () => {
+  const button = $("#quota-query");
+  button.disabled = true;
+  try {
+    await api("/api/network/quota/query", { method: "POST" });
+    await loadTrafficQuota(true);
+    notice("已向 10099 发送一次查询，24 小时内不会重复发送");
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    await loadTrafficQuota();
+  }
+});
 
 loadStatus();
 loadSMS();
+loadTrafficQuota(true);
 loadVoiceOverview();
 loadVoiceCalls();
 setNetworkTrafficPolling(true);
 setInterval(loadStatus, 10000);
 setInterval(loadSMS, 5000);
+setInterval(loadTrafficQuota, 30000);
 setInterval(loadVoiceCalls, 1500);

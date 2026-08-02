@@ -63,6 +63,13 @@ type app struct {
 	trafficMu        sync.Mutex
 	trafficBaselines map[string]networkByteCounters
 
+	quotaMu          sync.Mutex
+	quotaQueryMu     sync.Mutex
+	quota            trafficQuotaStore
+	quotaLoaded      bool
+	quotaPath        string
+	quotaLastPersist time.Time
+
 	labMu          sync.Mutex
 	labSampleMu    sync.Mutex
 	labTestMu      sync.Mutex
@@ -310,6 +317,7 @@ func serve(instance *app, listen string) {
 	defer stop()
 	go instance.startCellularLabSampler(ctx)
 	go instance.startCallMonitor(ctx)
+	go instance.startTrafficQuotaSampler(ctx)
 
 	if !instance.demo {
 		log.Printf("DJOneHub is using %s", instance.port)
@@ -538,8 +546,8 @@ func (a *app) recordSMS(sender, content string, timestamp time.Time) {
 
 func (a *app) mergeSMS(messages []receivedSMS) (newCount int, total int) {
 	a.smsMu.Lock()
-	defer a.smsMu.Unlock()
 	seen := make(map[string]bool, len(a.sms)+len(messages))
+	newMessages := make([]receivedSMS, 0, len(messages))
 	for _, item := range a.sms {
 		seen[smsCacheKey(item)] = true
 	}
@@ -553,6 +561,7 @@ func (a *app) mergeSMS(messages []receivedSMS) (newCount int, total int) {
 		}
 		seen[key] = true
 		a.sms = append(a.sms, item)
+		newMessages = append(newMessages, item)
 		newCount++
 	}
 	sort.SliceStable(a.sms, func(i, j int) bool {
@@ -561,7 +570,12 @@ func (a *app) mergeSMS(messages []receivedSMS) (newCount int, total int) {
 	if len(a.sms) > 500 {
 		a.sms = a.sms[:500]
 	}
-	return newCount, len(a.sms)
+	total = len(a.sms)
+	a.smsMu.Unlock()
+	for _, item := range newMessages {
+		a.maybeCalibrateTrafficQuota(item)
+	}
+	return newCount, total
 }
 
 func smsCacheKey(item receivedSMS) string {
@@ -731,6 +745,9 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/at", a.executeAT)
 	mux.HandleFunc("GET /api/network", a.networkDiagnostic)
 	mux.HandleFunc("GET /api/network/traffic", a.networkTraffic)
+	mux.HandleFunc("GET /api/network/quota", a.trafficQuotaStatus)
+	mux.HandleFunc("POST /api/network/quota/config", a.configureTrafficQuota)
+	mux.HandleFunc("POST /api/network/quota/query", a.queryTrafficQuota)
 	mux.HandleFunc("GET /api/network/lab", a.cellularLabHistory)
 	mux.HandleFunc("POST /api/network/lab/sample", a.cellularLabSampleNow)
 	mux.HandleFunc("POST /api/network/lab/web-test", a.cellularLabWebTest)

@@ -108,6 +108,41 @@ struct NetworkCheckResult: Codable, Sendable {
     }
 }
 
+struct TrafficQuota: Codable, Sendable {
+    let month: String
+    let baseQuotaBytes: UInt64
+    let rolloverBytes: UInt64
+    let planTotalBytes: UInt64
+    let usedBytes: UInt64
+    let remainingBytes: UInt64
+    let localTrackedBytes: UInt64
+    let trackingStartedAt: String
+    let source: String
+    let partialEstimate: Bool
+    let usedKnown: Bool
+    let remainingKnown: Bool
+    let lastCalibrationAt: String?
+    let queryConfigured: Bool
+    let autoQuery: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case month, source
+        case baseQuotaBytes = "base_quota_bytes"
+        case rolloverBytes = "rollover_bytes"
+        case planTotalBytes = "plan_total_bytes"
+        case usedBytes = "used_bytes"
+        case remainingBytes = "remaining_bytes"
+        case localTrackedBytes = "local_tracked_bytes"
+        case trackingStartedAt = "tracking_started_at"
+        case partialEstimate = "partial_estimate"
+        case usedKnown = "used_known"
+        case remainingKnown = "remaining_known"
+        case lastCalibrationAt = "last_calibration_at"
+        case queryConfigured = "query_configured"
+        case autoQuery = "auto_query"
+    }
+}
+
 enum APIError: LocalizedError {
     case invalidResponse
     case http(Int)
@@ -139,6 +174,10 @@ struct DJOneHubAPI: Sendable {
 
     func networkTraffic() async throws -> NetworkTraffic {
         try await get(path: "api/network/traffic")
+    }
+
+    func trafficQuota() async throws -> TrafficQuota {
+        try await get(path: "api/network/quota")
     }
 
     func cellularRoute() async throws -> NetworkCheckResult {

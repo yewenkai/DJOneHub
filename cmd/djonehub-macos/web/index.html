@@ -101,6 +101,22 @@
     <section id="network" class="view">
       <div class="view-intro"><div><span class="section-kicker">CELLULAR LAB</span><h2>蜂窝网络实验室</h2></div><p>记录无线质量、小区与真实 4G 出口体验。</p></div>
       <div class="section-heading">
+        <h2>本月流量</h2>
+        <button id="quota-query" class="secondary" type="button">向 10099 查询一次</button>
+      </div>
+      <p id="quota-status" class="inline-status">正在读取月度流量...</p>
+      <div id="quota-grid" class="diagnostic-grid"></div>
+      <form id="quota-config-form" class="quota-config-form">
+        <label>基础套餐（GB）<input id="quota-base" type="number" min="1" max="10000" step="0.1" value="100"></label>
+        <label>本月结转（GB）<input id="quota-rollover" type="number" min="0" max="10000" step="0.1" value="0"></label>
+        <label>当前已用（GB，可空）<input id="quota-manual-used" type="number" min="0" max="10000" step="0.01" placeholder="运营商显示值"></label>
+        <label>当前剩余（GB，可空）<input id="quota-manual-remaining" type="number" min="0" max="10000" step="0.01" placeholder="例如 200"></label>
+        <label>10099 查询指令<input id="quota-command" type="text" maxlength="20" placeholder="确认有效后再填写"></label>
+        <label class="quota-checkbox"><input id="quota-auto" type="checkbox">每天自动查询一次</label>
+        <button type="submit">保存流量设置</button>
+      </form>
+      <p class="inline-status">本机会持续统计 Baiwang 网卡流量；10099 暂无公开稳定接口，只有填写经过实测的短信指令后才允许启用每日校准，24 小时内不会重复发送。</p>
+      <div class="section-heading">
         <h2>实时观测</h2>
         <div class="heading-actions">
           <button id="lab-sample" class="secondary" type="button">立即采样</button>
