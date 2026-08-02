@@ -73,6 +73,19 @@ type app struct {
 
 	voiceMu sync.Mutex
 	voice   *voiceService
+
+	callMu            sync.RWMutex
+	callPollInterval  time.Duration
+	callConfigured    bool
+	callCurrent       []voiceCall
+	callActive        *callRecord
+	callHistory       []callRecord
+	callLastPoll      time.Time
+	callLastPollError string
+
+	networkRepairMu sync.Mutex
+	dhcpStatusMu    sync.RWMutex
+	dhcpStatus      dhcpRepairStatus
 }
 
 type usbInterfaceStatus struct {
@@ -135,6 +148,7 @@ type networkDiagnostic struct {
 	DefaultRoute      macDefaultRoute   `json:"default_route"`
 	USBNetworkPresent bool              `json:"usb_network_present"`
 	USBDevice         *usbDeviceStatus  `json:"usb_device,omitempty"`
+	DHCPRepair        dhcpRepairStatus  `json:"dhcp_repair"`
 	Raw               map[string]string `json:"raw,omitempty"`
 	Errors            map[string]string `json:"errors,omitempty"`
 }
@@ -222,6 +236,7 @@ func main() {
 				instance.discoveryError = ""
 				defer usbATDevice.Close()
 				log.Printf("USB AT bridge opened on DJI %s", usbATDevice.Description())
+				instance.scheduleCellularDHCPRepair("startup")
 			}
 			log.Printf("modem discovery skipped: %v", err)
 			go instance.startSMSPoller(context.Background())
@@ -273,6 +288,7 @@ func serve(instance *app, listen string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go instance.startCellularLabSampler(ctx)
+	go instance.startCallMonitor(ctx)
 
 	if !instance.demo {
 		log.Printf("DJOneHub is using %s", instance.port)
@@ -647,6 +663,7 @@ func (a *app) ensureUSBAT() error {
 	a.port = dev.Description()
 	a.discoveryError = ""
 	log.Printf("USB AT bridge opened on DJI %s", dev.Description())
+	a.scheduleCellularDHCPRepair("usb-reconnected")
 	return nil
 }
 
@@ -676,6 +693,9 @@ func (a *app) markUSBATDetached(reason string) {
 	a.discoveryError = "DJI USB device is not connected"
 	a.usbATBackoffUntil = time.Now().Add(2 * time.Second)
 	a.usbATBackoffErr = reason
+	a.callMu.Lock()
+	a.callConfigured = false
+	a.callMu.Unlock()
 }
 
 func (a *app) routes() http.Handler {
@@ -1366,6 +1386,7 @@ func (a *app) networkDiagnostic(w http.ResponseWriter, _ *http.Request) {
 		USBDevice:     a.currentUSBDevice(),
 		MacInterfaces: discoverMacNetworkInterfaces(),
 		DefaultRoute:  discoverMacDefaultRoute(),
+		DHCPRepair:    a.currentDHCPRepairStatus(),
 		Raw:           raw,
 		Errors:        errs,
 	}

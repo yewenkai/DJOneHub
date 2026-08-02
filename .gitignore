@@ -4,6 +4,9 @@
 # Build outputs
 /dist/
 /bin/
+/output/
+macos/*/.build/
+macos/*/dist/
 *.test
 *.out
 

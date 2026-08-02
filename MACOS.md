@@ -8,8 +8,10 @@ EG25-G. It does not require UTM for AT-mode management.
 - Automatic discovery of DJI (`2ca3`) and Quectel (`2c7c`) USB serial ports
 - Modem, SIM, operator, registration and signal status
 - Receive and send SMS through the modem AT port
+- Background call-state cache with missed-call history
+- Native Swift incoming-call and SMS notifier
 - Execute explicit AT commands
-- USB network diagnostics, traffic counters and cellular history charts
+- USB network diagnostics, asynchronous DHCP repair, traffic counters and cellular history charts
 - Experimental VoLTE call control and macOS audio bridge diagnostics
 - Local management page at `http://127.0.0.1:7575`
 - Packaged Apple Silicon release (Intel packaging is planned separately)
@@ -20,9 +22,9 @@ interface for management.
 
 ## Downloaded release
 
-The Apple Silicon ZIP contains the executable, its libusb runtime, licenses and
-the `djonehub` terminal launcher. It does not require Go, Homebrew or a separately
-installed libusb on the user's Mac.
+The Apple Silicon ZIP contains the executable, its libusb runtime, native Swift
+notifier, licenses and the `djonehub` terminal launcher. It does not require Go,
+Homebrew or a separately installed libusb on the user's Mac.
 
 From the extracted release directory:
 
@@ -41,6 +43,7 @@ Requirements:
 
 - macOS 13 or newer
 - Go 1.26 or newer
+- Swift 6 or newer
 
 ```sh
 ./scripts/package-macos-arm64.sh v0.1.0-preview

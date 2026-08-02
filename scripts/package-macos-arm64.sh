@@ -33,9 +33,13 @@ if ! command -v pkg-config >/dev/null 2>&1; then
   echo "pkg-config is required on the build Mac." >&2
   exit 1
 fi
+if ! command -v swift >/dev/null 2>&1; then
+  echo "Swift is required to build the native notifier." >&2
+  exit 1
+fi
 
 rm -rf "${STAGE_DIR}"
-mkdir -p "${STAGE_DIR}/bin" "${STAGE_DIR}/lib" "${STAGE_DIR}/licenses"
+mkdir -p "${STAGE_DIR}/bin" "${STAGE_DIR}/lib" "${STAGE_DIR}/licenses" "${STAGE_DIR}/notifier"
 mkdir -p "${BUILD_ROOT}"
 
 if [ ! -f "${LIBUSB_ARCHIVE}" ]; then
@@ -99,6 +103,9 @@ MACOSX_DEPLOYMENT_TARGET=13.0 CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build \
   -trimpath -buildvcs=false -ldflags="-s -w" \
   -o "${STAGE_DIR}/bin/djonehub-macos" ./cmd/djonehub-macos
 
+NOTIFIER_APP=$("${ROOT_DIR}/macos/DJOneHubNotifier/build-app.sh" | tail -n 1)
+ditto --norsrc --noextattr --noqtn --noacl "${NOTIFIER_APP}" "${STAGE_DIR}/notifier/DJOneHubNotifier.app"
+
 cp "${LIBUSB_PREFIX}/lib/libusb-1.0.0.dylib" "${STAGE_DIR}/lib/libusb-1.0.0.dylib"
 cp "${ROOT_DIR}/packaging/djonehub" "${STAGE_DIR}/djonehub"
 cp "${ROOT_DIR}/packaging/install" "${STAGE_DIR}/install"
@@ -106,10 +113,12 @@ cp "${ROOT_DIR}/packaging/README.md" "${STAGE_DIR}/README.md"
 cp "${ROOT_DIR}/LICENSE" "${STAGE_DIR}/LICENSE"
 cp "${LIBUSB_SOURCE}/COPYING" "${STAGE_DIR}/licenses/libusb-COPYING"
 cp "${ROOT_DIR}/packaging/THIRD_PARTY_NOTICES.md" "${STAGE_DIR}/THIRD_PARTY_NOTICES.md"
+cp "${ROOT_DIR}/packaging/com.yewenkai.djonehub-notifier.plist" "${STAGE_DIR}/notifier/com.yewenkai.djonehub-notifier.plist"
 
 chmod 755 "${STAGE_DIR}/djonehub" "${STAGE_DIR}/install" "${STAGE_DIR}/bin/djonehub-macos" "${STAGE_DIR}/lib/libusb-1.0.0.dylib"
 codesign --force --sign - "${STAGE_DIR}/lib/libusb-1.0.0.dylib"
 codesign --force --sign - "${STAGE_DIR}/bin/djonehub-macos"
+codesign --verify --deep --strict --verbose=2 "${STAGE_DIR}/notifier/DJOneHubNotifier.app"
 
 if otool -L "${STAGE_DIR}/bin/djonehub-macos" | grep -q '/opt/homebrew\|/usr/local\|/Cellar/'; then
   echo "Release binary still contains a package-manager dependency." >&2

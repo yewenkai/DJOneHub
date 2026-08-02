@@ -384,6 +384,31 @@ function renderVoiceCalls(calls, audio) {
   }));
 }
 
+function renderVoiceHistory(history) {
+  const list = $("#voice-history");
+  const rows = Array.isArray(history) ? history : [];
+  if (!rows.length) {
+    list.className = "list empty";
+    list.textContent = "暂无通话记录";
+    return;
+  }
+  list.className = "list";
+  list.replaceChildren(...rows.map((call) => {
+    const row = document.createElement("article");
+    row.className = "item";
+    const title = document.createElement("strong");
+    title.textContent = maskPhoneNumber(call.number || "未知号码");
+    const detail = document.createElement("p");
+    if (call.missed) detail.textContent = "未接来电";
+    else detail.textContent = call.direction === "incoming" ? "已接来电" : "呼出电话";
+    const ended = document.createElement("time");
+    ended.dateTime = call.ended_at || call.updated_at || "";
+    ended.textContent = new Date(call.ended_at || call.updated_at || call.started_at).toLocaleString("zh-CN");
+    row.append(title, detail, ended);
+    return row;
+  }));
+}
+
 function renderVoiceOverview(overview) {
   voiceOverview = overview;
   const inventory = overview.inventory || {};
@@ -426,6 +451,7 @@ async function loadVoiceCalls() {
   try {
     const status = await api("/api/voice/calls");
     renderVoiceCalls(status.calls, status.audio);
+    renderVoiceHistory(status.history);
     if (voiceOverview) {
       voiceOverview.calls = status.calls;
       voiceOverview.audio = status.audio;
@@ -745,6 +771,11 @@ async function loadNetwork() {
       diagnosticCard("蜂窝 IP", addresses || "无", "模块侧拿到的数据网络地址"),
       diagnosticCard("APN", apns || "无", "当前可见 PDP 配置"),
       diagnosticCard("USB 枚举", usb, diag.usb_device?.mode || ""),
+      diagnosticCard(
+        "DHCP 自愈",
+        diag.dhcp_repair?.running ? "检测中" : (diag.dhcp_repair?.last_error ? "最近失败" : (diag.dhcp_repair?.last_success ? "正常" : "待检测")),
+        diag.dhcp_repair?.last_error || (diag.dhcp_repair?.address ? `${diag.dhcp_repair.service} · ${diag.dhcp_repair.address}` : "USB 重连后自动检查 IPv4"),
+      ),
     );
 
     const errorText = diag.errors ? ` · 错误：${Object.values(diag.errors).join("；")}` : "";
@@ -1117,6 +1148,7 @@ $("#reboot-module").addEventListener("click", rebootModule);
 loadStatus();
 loadSMS();
 loadVoiceOverview();
+loadVoiceCalls();
 setNetworkTrafficPolling(true);
 setInterval(loadStatus, 10000);
 setInterval(loadSMS, 5000);

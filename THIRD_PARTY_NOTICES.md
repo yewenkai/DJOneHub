@@ -38,3 +38,11 @@ The source repository includes vendored dependencies under `third_party/` so the
 | multierr | `third_party/multierr/LICENSE.txt` |
 
 Dependencies fetched through Go modules retain their own licenses and copyright notices. This file is informational and does not replace any component's full license text.
+
+## DJOneHub-mac-enhanced notifier
+
+The native macOS call and SMS notifier is adapted from the notifier in
+`rogerbush007-a11y/DJOneHub-mac-enhanced`, distributed under the same PolyForm
+Noncommercial License 1.0.0 used by DJOneHub.
+
+- Source: <https://github.com/rogerbush007-a11y/DJOneHub-mac-enhanced>

@@ -68,18 +68,21 @@ func (a *app) stopVoiceService() {
 }
 
 func (a *app) voiceStatus(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, a.currentVoiceService().Overview())
+	snapshot := a.callSnapshot()
+	writeJSON(w, http.StatusOK, a.currentVoiceService().Overview(snapshot.Calls, snapshot.LastPollError))
 }
 
 func (a *app) voiceCalls(w http.ResponseWriter, _ *http.Request) {
 	service := a.currentVoiceService()
-	calls, err := service.Calls()
+	snapshot := a.callSnapshot()
 	service.mu.Lock()
 	audioRoute := service.audioRoute
 	service.mu.Unlock()
-	response := map[string]any{"calls": calls, "audio": service.audio.Status(), "audio_route": audioRoute}
-	if err != nil {
-		response["error"] = err.Error()
+	response := map[string]any{
+		"calls": snapshot.Calls, "active": snapshot.Active, "history": snapshot.History,
+		"polling": snapshot.Polling, "poll_interval_s": int(snapshot.PollInterval.Seconds()),
+		"last_poll": snapshot.LastPoll, "last_poll_error": snapshot.LastPollError,
+		"audio": service.audio.Status(), "audio_route": audioRoute,
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -135,7 +138,7 @@ func (a *app) voiceAudioStop(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *voiceService) Overview() voiceOverview {
+func (s *voiceService) Overview(calls []voiceCall, callError string) voiceOverview {
 	if s.demo {
 		return voiceOverview{
 			Available: true,
@@ -150,14 +153,13 @@ func (s *voiceService) Overview() voiceOverview {
 		}
 	}
 
-	overview := voiceOverview{Calls: []voiceCall{}, Audio: s.audio.Status()}
+	overview := voiceOverview{Calls: append([]voiceCall(nil), calls...), Audio: s.audio.Status()}
 	overview.Inventory = s.audio.Inventory()
 	overview.UACEnabled = overview.Inventory.Available
-	if calls, err := s.Calls(); err == nil {
-		overview.Calls = calls
+	if callError == "" {
 		overview.Available = true
 	} else {
-		overview.LastError = err.Error()
+		overview.LastError = callError
 	}
 	if response, err := s.runAT(`AT+QCFG="usbcfg"`, 4*time.Second); err == nil {
 		overview.USBCfg = firstATPayload(response, "+QCFG:")
@@ -179,7 +181,7 @@ func (s *voiceService) Overview() voiceOverview {
 	return overview
 }
 
-func (s *voiceService) Calls() ([]voiceCall, error) {
+func (s *voiceService) QueryCalls() ([]voiceCall, error) {
 	if s.demo {
 		return []voiceCall{}, nil
 	}
@@ -187,7 +189,10 @@ func (s *voiceService) Calls() ([]voiceCall, error) {
 	if err != nil {
 		return []voiceCall{}, err
 	}
-	calls := parseCLCC(response)
+	return parseCLCC(response), nil
+}
+
+func (s *voiceService) ObserveCalls(calls []voiceCall) {
 	active := false
 	for _, call := range calls {
 		if call.State == "active" {
@@ -202,7 +207,6 @@ func (s *voiceService) Calls() ([]voiceCall, error) {
 		s.audioRoute = false
 		s.mu.Unlock()
 	}
-	return calls, nil
 }
 
 func (s *voiceService) Dial(number string, withAudio bool) error {
