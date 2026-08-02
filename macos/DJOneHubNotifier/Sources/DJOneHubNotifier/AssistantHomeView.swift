@@ -9,6 +9,8 @@ final class AssistantState: ObservableObject {
     @Published var radioBand = "--"
     @Published var interfaceName = "--"
     @Published var usingCellularRoute = false
+    @Published var tunnelActive = false
+    @Published var physicalRouteKind = "unknown"
     @Published var routeSummary = "正在检查默认出口"
     @Published var downloadBytesPerSecond = 0.0
     @Published var uploadBytesPerSecond = 0.0
@@ -70,6 +72,8 @@ final class AssistantState: ObservableObject {
     func receivedRoute(_ result: NetworkCheckResult) {
         backendConnected = true
         usingCellularRoute = result.ok
+        tunnelActive = result.tunnelActive ?? false
+        physicalRouteKind = result.physicalKind ?? (result.ok ? "cellular" : "unknown")
         routeSummary = result.summary
         lastUpdate = Date()
     }
@@ -164,14 +168,23 @@ private struct NetworkDashboardHeader: View {
             Spacer()
             HStack(spacing: 5) {
                 Circle()
-                    .fill(state.usingCellularRoute ? Color.green : Color.orange)
+                    .fill(routeColor)
                     .frame(width: 7, height: 7)
-                Text(state.usingCellularRoute ? "4G 出口" : "非 4G 出口")
+                Text(state.routeSummary)
                     .font(.caption.weight(.semibold))
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(.quaternary, in: Capsule())
+        }
+    }
+
+    private var routeColor: Color {
+        switch state.physicalRouteKind {
+        case "cellular": return .green
+        case "wifi": return .blue
+        case "ethernet": return .cyan
+        default: return .orange
         }
     }
 }

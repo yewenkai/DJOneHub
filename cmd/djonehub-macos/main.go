@@ -189,9 +189,30 @@ type networkTrafficSnapshot struct {
 }
 
 type networkCheckResult struct {
-	OK      bool   `json:"ok"`
-	Summary string `json:"summary"`
-	Detail  string `json:"detail"`
+	OK                bool   `json:"ok"`
+	Summary           string `json:"summary"`
+	Detail            string `json:"detail"`
+	TunnelActive      bool   `json:"tunnel_active"`
+	LogicalInterface  string `json:"logical_interface,omitempty"`
+	PhysicalInterface string `json:"physical_interface,omitempty"`
+	PhysicalKind      string `json:"physical_kind,omitempty"`
+	PhysicalName      string `json:"physical_name,omitempty"`
+}
+
+type macPhysicalRoute struct {
+	TunnelActive      bool
+	LogicalInterface  string
+	LogicalGateway    string
+	PhysicalInterface string
+	PhysicalGateway   string
+	PhysicalKind      string
+	PhysicalName      string
+	Detection         string
+}
+
+type macNWIInfo struct {
+	VPNServers map[string][]string
+	Interfaces []string
 }
 
 func main() {
@@ -1473,13 +1494,6 @@ func sessionTrafficFromCounters(current, baseline networkByteCounters) (rx, tx, 
 func (a *app) check4GRoute(w http.ResponseWriter, _ *http.Request) {
 	route := discoverMacDefaultRoute()
 	interfaces := discoverMacNetworkInterfaces()
-	var active *macNetInterface
-	for i := range interfaces {
-		if interfaces[i].Name == route.Interface {
-			active = &interfaces[i]
-			break
-		}
-	}
 	if route.Interface == "" {
 		writeJSON(w, http.StatusOK, networkCheckResult{
 			OK:      false,
@@ -1488,22 +1502,17 @@ func (a *app) check4GRoute(w http.ResponseWriter, _ *http.Request) {
 		})
 		return
 	}
-	if active != nil && active.Name != "en0" && active.Kind == "ethernet" && active.Status == "active" {
-		writeJSON(w, http.StatusOK, networkCheckResult{
-			OK:      true,
-			Summary: "当前正在走 4G 模块",
-			Detail:  fmt.Sprintf("默认出口 %s -> %s，IP %s", route.Interface, route.Gateway, active.IPv4),
-		})
-		return
-	}
-	detail := fmt.Sprintf("默认出口 %s -> %s", route.Interface, route.Gateway)
-	if active != nil && active.IPv4 != "" {
-		detail += "，IP " + active.IPv4
-	}
+	services, _ := discoverMacNetworkServices()
+	physical := discoverMacPhysicalRoute(route, interfaces, services)
 	writeJSON(w, http.StatusOK, networkCheckResult{
-		OK:      false,
-		Summary: "当前没有优先走 4G 模块",
-		Detail:  detail,
+		OK:                physical.PhysicalKind == "cellular",
+		Summary:           summarizeMacPhysicalRoute(physical),
+		Detail:            detailMacPhysicalRoute(physical, interfaces),
+		TunnelActive:      physical.TunnelActive,
+		LogicalInterface:  physical.LogicalInterface,
+		PhysicalInterface: physical.PhysicalInterface,
+		PhysicalKind:      physical.PhysicalKind,
+		PhysicalName:      physical.PhysicalName,
 	})
 }
 
@@ -1668,12 +1677,20 @@ func discoverMacNetworkInterfaces() []macNetInterface {
 }
 
 func discoverMacDefaultRoute() macDefaultRoute {
-	out, err := exec.Command("route", "-n", "get", "default").Output()
+	return discoverMacRouteTo("default")
+}
+
+func discoverMacRouteTo(destination string) macDefaultRoute {
+	out, err := exec.Command("route", "-n", "get", destination).Output()
 	if err != nil {
 		return macDefaultRoute{}
 	}
+	return parseMacRoute(string(out))
+}
+
+func parseMacRoute(output string) macDefaultRoute {
 	var route macDefaultRoute
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "gateway:") {
 			route.Gateway = strings.TrimSpace(strings.TrimPrefix(line, "gateway:"))
@@ -1683,6 +1700,152 @@ func discoverMacDefaultRoute() macDefaultRoute {
 		}
 	}
 	return route
+}
+
+func discoverMacNWIInfo() macNWIInfo {
+	out, err := exec.Command("scutil", "--nwi").Output()
+	if err != nil {
+		return macNWIInfo{}
+	}
+	return parseMacNWIInfo(string(out))
+}
+
+func parseMacNWIInfo(output string) macNWIInfo {
+	info := macNWIInfo{VPNServers: make(map[string][]string)}
+	var current string
+	interfaceLine := regexp.MustCompile(`^([A-Za-z0-9_.-]+)\s*:\s*flags`)
+	for _, raw := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if match := interfaceLine.FindStringSubmatch(line); len(match) == 2 {
+			current = match[1]
+			continue
+		}
+		if strings.HasPrefix(line, "VPN server :") && current != "" {
+			server := strings.TrimSpace(strings.TrimPrefix(line, "VPN server :"))
+			if server != "" {
+				info.VPNServers[current] = append(info.VPNServers[current], server)
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "Network interfaces:") {
+			info.Interfaces = strings.Fields(strings.TrimSpace(strings.TrimPrefix(line, "Network interfaces:")))
+		}
+	}
+	return info
+}
+
+func discoverMacPhysicalRoute(logical macDefaultRoute, interfaces []macNetInterface, services []macNetworkService) macPhysicalRoute {
+	nwi := discoverMacNWIInfo()
+	endpointRoutes := make(map[string]macDefaultRoute)
+	for _, server := range nwi.VPNServers[logical.Interface] {
+		endpointRoutes[server] = discoverMacRouteTo(server)
+	}
+	return resolveMacPhysicalRoute(logical, interfaces, services, nwi, endpointRoutes)
+}
+
+func resolveMacPhysicalRoute(logical macDefaultRoute, interfaces []macNetInterface, services []macNetworkService, nwi macNWIInfo, endpointRoutes map[string]macDefaultRoute) macPhysicalRoute {
+	result := macPhysicalRoute{
+		TunnelActive:     isMacTunnelInterface(logical.Interface),
+		LogicalInterface: logical.Interface,
+		LogicalGateway:   logical.Gateway,
+	}
+	if !result.TunnelActive {
+		return fillMacPhysicalRoute(result, logical, interfaces, services, "default-route")
+	}
+	for _, server := range nwi.VPNServers[logical.Interface] {
+		candidate := endpointRoutes[server]
+		if candidate.Interface != "" && !isMacTunnelInterface(candidate.Interface) && isActiveMacInterface(candidate.Interface, interfaces) {
+			return fillMacPhysicalRoute(result, candidate, interfaces, services, "vpn-server-route")
+		}
+	}
+	for _, name := range nwi.Interfaces {
+		if name == logical.Interface || isMacTunnelInterface(name) || !isActiveMacInterface(name, interfaces) {
+			continue
+		}
+		return fillMacPhysicalRoute(result, macDefaultRoute{Interface: name}, interfaces, services, "nwi-fallback")
+	}
+	return result
+}
+
+func fillMacPhysicalRoute(result macPhysicalRoute, route macDefaultRoute, interfaces []macNetInterface, services []macNetworkService, detection string) macPhysicalRoute {
+	result.PhysicalInterface = route.Interface
+	result.PhysicalGateway = route.Gateway
+	result.Detection = detection
+	result.PhysicalKind, result.PhysicalName = classifyMacPhysicalInterface(route.Interface, services)
+	if result.PhysicalName == "" {
+		result.PhysicalName = route.Interface
+	}
+	return result
+}
+
+func isMacTunnelInterface(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(name, "utun") || strings.HasPrefix(name, "ipsec") || strings.HasPrefix(name, "ppp") || strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "tap")
+}
+
+func isActiveMacInterface(name string, interfaces []macNetInterface) bool {
+	for _, item := range interfaces {
+		if item.Name == name {
+			return item.Status == "active" && item.IPv4 != ""
+		}
+	}
+	return false
+}
+
+func classifyMacPhysicalInterface(name string, services []macNetworkService) (kind, displayName string) {
+	for _, service := range services {
+		if service.Disabled || service.Device != name {
+			continue
+		}
+		port := strings.TrimSpace(service.HardwarePort)
+		if isDJICellularService(service) {
+			return "cellular", "4G 模块"
+		}
+		if strings.EqualFold(port, "Wi-Fi") || strings.Contains(strings.ToLower(port), "airport") {
+			return "wifi", "Wi-Fi"
+		}
+		if strings.HasPrefix(name, "en") {
+			if service.Name != "" {
+				return "ethernet", service.Name
+			}
+			return "ethernet", "有线网络"
+		}
+	}
+	if name == "en0" {
+		return "wifi", "Wi-Fi"
+	}
+	if strings.HasPrefix(name, "en") {
+		return "ethernet", "有线网络"
+	}
+	return "unknown", name
+}
+
+func summarizeMacPhysicalRoute(route macPhysicalRoute) string {
+	label := route.PhysicalName
+	if label == "" || route.PhysicalKind == "unknown" {
+		label = "未知实体网络"
+	}
+	if route.TunnelActive {
+		return "VPN 经 " + label
+	}
+	return "当前使用 " + label
+}
+
+func detailMacPhysicalRoute(route macPhysicalRoute, interfaces []macNetInterface) string {
+	if route.PhysicalInterface == "" {
+		return fmt.Sprintf("逻辑出口 %s，未能识别承载 VPN 的实体接口", route.LogicalInterface)
+	}
+	detail := fmt.Sprintf("逻辑出口 %s，实体出口 %s", route.LogicalInterface, route.PhysicalInterface)
+	if route.PhysicalGateway != "" {
+		detail += " -> " + route.PhysicalGateway
+	}
+	for _, item := range interfaces {
+		if item.Name == route.PhysicalInterface && item.IPv4 != "" {
+			detail += "，IP " + item.IPv4
+			break
+		}
+	}
+	return detail
 }
 
 func splitIfconfigBlocks(out string) []string {

@@ -92,6 +92,20 @@ struct NetworkCheckResult: Codable, Sendable {
     let ok: Bool
     let summary: String
     let detail: String
+    let tunnelActive: Bool?
+    let logicalInterface: String?
+    let physicalInterface: String?
+    let physicalKind: String?
+    let physicalName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, summary, detail
+        case tunnelActive = "tunnel_active"
+        case logicalInterface = "logical_interface"
+        case physicalInterface = "physical_interface"
+        case physicalKind = "physical_kind"
+        case physicalName = "physical_name"
+    }
 }
 
 enum APIError: LocalizedError {
