@@ -13,14 +13,24 @@ en9 1500 192.168.225 192.168.225.20 120 - 4096 80 - 2048 -`
 	}
 }
 
-func TestSelectUSBTrafficInterfacePrefersDefaultRoute(t *testing.T) {
+func TestSelectDJITrafficInterfaceRequiresSupportedUSBDevice(t *testing.T) {
 	interfaces := []macNetInterface{
-		{Name: "en0", Kind: "ethernet", Status: "active"},
-		{Name: "en8", Kind: "ethernet", Status: "active"},
-		{Name: "en9", Kind: "ethernet", Status: "active"},
+		{Name: "en9", Kind: "ethernet", Status: "active", IPv4: "192.168.31.177"},
+		{Name: "en19", Kind: "ethernet", Status: "active", IPv4: "192.168.225.25"},
 	}
-	if got := selectUSBTrafficInterface(interfaces, macDefaultRoute{Interface: "en9"}); got != "en9" {
-		t.Fatalf("selected interface = %q, want en9", got)
+	services := []macNetworkService{
+		{Name: "AX88179A", HardwarePort: "AX88179A", Device: "en9"},
+		{Name: "Baiwang", HardwarePort: "Baiwang", Device: "en19"},
+	}
+	if got := selectDJITrafficInterface(nil, interfaces, services); got != "" {
+		t.Fatalf("selected interface without DJI device = %q, want empty", got)
+	}
+	device := &usbDeviceStatus{VendorID: "2c7c", ProductID: "0125"}
+	if got := selectDJITrafficInterface(device, interfaces, services[:1]); got != "" {
+		t.Fatalf("selected interface with wired dock only = %q, want empty", got)
+	}
+	if got := selectDJITrafficInterface(device, interfaces, services); got != "en19" {
+		t.Fatalf("selected interface = %q, want en19", got)
 	}
 }
 

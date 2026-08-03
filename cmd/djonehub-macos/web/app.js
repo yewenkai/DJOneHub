@@ -7,6 +7,10 @@ let trafficQuotaInFlight = false;
 let cellularLabTimer = null;
 let cellularLabSamples = [];
 let cellularLabInFlight = false;
+let bandPreference = null;
+let bandPreferenceInFlight = false;
+let bandPreferenceTimer = null;
+let currentOperator = "";
 let voiceOverview = null;
 let voiceStatusInFlight = false;
 let voiceCallsInFlight = false;
@@ -59,6 +63,40 @@ const operatorNames = new Map([
   ["CHINA BROADNET", "中国广电"],
   ["46015", "中国广电"],
 ]);
+
+const mainlandLTEBandInfo = new Map([
+  [1, { frequency: "2100 MHz", duplex: "FDD", carriers: ["telecom", "unicom"] }],
+  [3, { frequency: "1800 MHz", duplex: "FDD", carriers: ["mobile", "unicom", "telecom"] }],
+  [5, { frequency: "850 MHz", duplex: "FDD", carriers: ["telecom"] }],
+  [8, { frequency: "900 MHz", duplex: "FDD", carriers: ["mobile", "unicom"] }],
+  [34, { frequency: "2000 MHz", duplex: "TDD", carriers: ["mobile"] }],
+  [38, { frequency: "2600 MHz", duplex: "TDD", carriers: ["mobile"] }],
+  [39, { frequency: "1900 MHz", duplex: "TDD", carriers: ["mobile"] }],
+  [40, { frequency: "2300 MHz", duplex: "TDD", carriers: ["mobile", "unicom"] }],
+  [41, { frequency: "2600 MHz", duplex: "TDD", carriers: ["mobile"] }],
+]);
+
+const otherLTEBandInfo = new Map([
+  [2, { frequency: "1900 MHz", duplex: "FDD" }],
+  [4, { frequency: "AWS", duplex: "FDD" }],
+  [7, { frequency: "2600 MHz", duplex: "FDD" }],
+  [12, { frequency: "700 MHz", duplex: "FDD" }],
+  [13, { frequency: "700 MHz", duplex: "FDD" }],
+  [18, { frequency: "850 MHz", duplex: "FDD" }],
+  [19, { frequency: "850 MHz", duplex: "FDD" }],
+  [20, { frequency: "800 MHz", duplex: "FDD" }],
+  [25, { frequency: "1900 MHz", duplex: "FDD" }],
+  [26, { frequency: "850 MHz", duplex: "FDD", note: "与B5频率有重叠，国内电信LTE仍按B5使用" }],
+  [28, { frequency: "700 MHz", duplex: "FDD", note: "广电国内700MHz主要用于5G" }],
+  [66, { frequency: "AWS", duplex: "FDD" }],
+  [71, { frequency: "600 MHz", duplex: "FDD" }],
+]);
+
+const carrierLabels = {
+  mobile: "中国移动",
+  unicom: "中国联通",
+  telecom: "中国电信",
+};
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -223,6 +261,7 @@ function signalTone(dbm) {
 async function loadStatus() {
   try {
     const status = await api("/api/status");
+    currentOperator = status.operator || "";
     setValue("#operator", displayOperatorName(status.operator), status.operator ? "info" : "muted");
     setValue("#signal", status.signal_dbm ? `${status.signal_dbm} dBm` : "--", signalTone(status.signal_dbm));
     setValue("#network-mode", status.network_mode || status.reg_status_text || "--", status.network_mode ? "info" : "muted");
@@ -710,6 +749,216 @@ function renderCellularLab() {
   ]);
 }
 
+function observedLTEBands() {
+  const bands = new Set();
+  cellularLabSamples.forEach((sample) => {
+    const match = String(sample.band || "").match(/(\d+)/);
+    if (match) bands.add(Number(match[1]));
+  });
+  return bands;
+}
+
+function isBroadnetOperator(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return ["中国广电", "CBN", "CHN-CBN", "CHINA BROADNET", "46015"].includes(normalized);
+}
+
+function createCarrierBadge(carrier, compact = false) {
+  const badge = document.createElement("span");
+  badge.className = `carrier-badge ${carrier}${compact ? " compact-badge" : ""}`;
+  badge.textContent = carrier === "broadnet" ? "广电共享" : carrierLabels[carrier];
+  return badge;
+}
+
+function createBandOption(band, info, enabled, observed, servingBand, broadnet) {
+  const label = document.createElement("label");
+  label.className = "band-option";
+  const isServing = Number(servingBand) === Number(band);
+  if (isServing) label.classList.add("serving");
+  if (observed.has(Number(band))) label.classList.add("observed");
+  if (broadnet && info.carriers?.includes("mobile")) label.classList.add("broadnet-candidate");
+
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.name = "lte-band";
+  input.value = String(band);
+  input.checked = enabled.has(Number(band));
+
+  const heading = document.createElement("div");
+  heading.className = "band-option-heading";
+  const title = document.createElement("strong");
+  title.textContent = `B${band}`;
+  const frequency = document.createElement("small");
+  frequency.textContent = `${info.frequency} · ${info.duplex}`;
+  heading.append(title, frequency);
+
+  const carriers = document.createElement("div");
+  carriers.className = "carrier-badges";
+  (info.carriers || []).forEach((carrier) => carriers.append(createCarrierBadge(carrier)));
+  if (broadnet && info.carriers?.includes("mobile")) carriers.append(createCarrierBadge("broadnet"));
+  if (!info.carriers?.length) {
+    const roaming = document.createElement("span");
+    roaming.className = "carrier-badge roaming";
+    roaming.textContent = info.note || "境外 / 漫游";
+    carriers.append(roaming);
+  }
+  label.append(input, heading, carriers);
+  return label;
+}
+
+function createBandGroup(title, detail, bands, infoMap, enabled, observed, servingBand, broadnet) {
+  const section = document.createElement("section");
+  section.className = "band-group";
+  const heading = document.createElement("div");
+  heading.className = "band-group-heading";
+  const text = document.createElement("div");
+  const name = document.createElement("h3");
+  name.textContent = title;
+  const description = document.createElement("p");
+  description.textContent = detail;
+  text.append(name, description);
+  heading.append(text);
+  if (title.includes("中国大陆")) {
+    const legend = document.createElement("div");
+    legend.className = "carrier-legend";
+    ["mobile", "unicom", "telecom"].forEach((carrier) => legend.append(createCarrierBadge(carrier, true)));
+    if (broadnet) legend.append(createCarrierBadge("broadnet", true));
+    heading.append(legend);
+  }
+  const grid = document.createElement("div");
+  grid.className = "band-grid";
+  bands.forEach((band) => grid.append(createBandOption(band, infoMap.get(band) || { frequency: "--", duplex: "LTE" }, enabled, observed, servingBand, broadnet)));
+  section.append(heading, grid);
+  return section;
+}
+
+function renderBandPreference(status) {
+  bandPreference = status;
+  const supported = Array.isArray(status.supported_bands) ? status.supported_bands : [];
+  const enabled = new Set(Array.isArray(status.enabled_bands) ? status.enabled_bands : []);
+  const observed = observedLTEBands();
+  const operation = status.operation || {};
+  const broadnet = isBroadnetOperator(currentOperator);
+  const modeLabels = {
+    auto: "自动选频",
+    preferred: enabled.size === 1 ? "单频锁定" : "优选频段",
+    custom: "外部自定义",
+  };
+  $("#band-summary").replaceChildren(
+    diagnosticCard("当前驻留", status.serving_band ? `LTE B${status.serving_band}` : "待读取", "网络仍会在允许频段内自主选择小区"),
+    diagnosticCard("选择策略", modeLabels[status.mode] || status.mode, status.mode === "auto" ? `模块可在 ${supported.length} 个频段中选择` : `当前允许 ${enabled.size} 个频段`),
+    diagnosticCard("安全恢复", status.can_restore ? "原始配置已保存" : "首次修改时保存", operation.rolled_back ? "最近一次失败已自动回退" : `失联 ${status.registration_timeout_seconds || 75} 秒自动回退`),
+  );
+
+  const domesticBands = supported.filter((band) => mainlandLTEBandInfo.has(Number(band)));
+  const otherBands = supported.filter((band) => !mainlandLTEBandInfo.has(Number(band)));
+  $("#band-options").replaceChildren(
+    createBandGroup(
+      "中国大陆常用 4G",
+      broadnet ? "广电4G可使用移动共享网络；当前卡和当地网络最终决定可接入频段。" : "按工信部频率许可与常见 LTE Band 映射整理。",
+      domesticBands,
+      mainlandLTEBandInfo,
+      enabled,
+      observed,
+      status.serving_band,
+      broadnet,
+    ),
+    createBandGroup(
+      "其他地区 / 漫游频段",
+      "模块硬件允许，但不属于中国大陆常规 LTE 主力频段。",
+      otherBands,
+      otherLTEBandInfo,
+      enabled,
+      observed,
+      status.serving_band,
+      broadnet,
+    ),
+  );
+
+  const operatorNote = $("#band-operator-note");
+  if (broadnet) {
+    operatorNote.className = "band-operator-note broadnet-note";
+    operatorNote.textContent = `当前 SIM：中国广电。当前真机驻留 LTE B${status.serving_band || "--"}；带“广电共享”的频段来自中国移动4G网络候选。广电700MHz在国内主要用于5G，本工具仅处理4G，因此不把B28列为广电4G主力频段。`;
+  } else {
+    operatorNote.className = "band-operator-note";
+    operatorNote.textContent = `当前运营商：${displayOperatorName(currentOperator) || "待读取"}。运营商标签表示中国大陆常见网络归属，不保证当地一定部署。`;
+  }
+  $("#band-selector").disabled = Boolean(operation.in_progress);
+  $("#band-apply").disabled = Boolean(operation.in_progress) || supported.length === 0;
+  $("#band-auto").disabled = Boolean(operation.in_progress) || (!status.can_restore && status.mode === "auto");
+
+  if (operation.in_progress) {
+    $("#band-status").textContent = `${operation.message || "正在切换频段"}，请保持模块连接；失败会自动恢复。`;
+  } else if (operation.phase === "failed") {
+    $("#band-status").textContent = `${operation.message || "频段切换失败"}：${operation.last_error || "请重新读取状态"}`;
+  } else if (operation.message) {
+    $("#band-status").textContent = operation.message;
+  } else if (status.mode === "auto") {
+    $("#band-status").textContent = `当前为自动选频，模块正在 LTE B${status.serving_band || "--"}；取消不需要的频段后可应用白名单。`;
+  } else {
+    $("#band-status").textContent = `当前允许：${[...enabled].map((band) => `B${band}`).join("、") || "--"}。`;
+  }
+}
+
+function scheduleBandPreferencePoll(inProgress) {
+  clearTimeout(bandPreferenceTimer);
+  bandPreferenceTimer = null;
+  if (inProgress) {
+    bandPreferenceTimer = setTimeout(() => loadBandPreference(true), 2000);
+  }
+}
+
+async function loadBandPreference(silent = false) {
+  if (bandPreferenceInFlight) return;
+  bandPreferenceInFlight = true;
+  if (!silent) $("#band-status").textContent = "正在读取模块允许的 LTE 频段...";
+  try {
+    const status = await api("/api/network/bands");
+    renderBandPreference(status);
+    scheduleBandPreferencePoll(Boolean(status.operation?.in_progress));
+  } catch (error) {
+    $("#band-status").textContent = `读取频段配置失败：${error.message}`;
+    $("#band-apply").disabled = true;
+    $("#band-auto").disabled = true;
+    scheduleBandPreferencePoll(Boolean(bandPreference?.operation?.in_progress));
+  } finally {
+    bandPreferenceInFlight = false;
+  }
+}
+
+async function applyBandPreference(mode) {
+  const selected = [...document.querySelectorAll('input[name="lte-band"]:checked')].map((input) => Number(input.value));
+  if (mode === "preferred" && selected.length === 0) {
+    notice("至少选择一个 LTE 频段");
+    return;
+  }
+  const singleBand = mode === "preferred" && selected.length === 1;
+  const currentBand = bandPreference?.serving_band ? `当前驻留 B${bandPreference.serving_band}。` : "";
+  const confirmed = await showModal({
+    title: mode === "auto" ? "恢复自动选频" : (singleBand ? `锁定 LTE B${selected[0]}` : "应用频段白名单"),
+    message: mode === "auto"
+      ? "将恢复此设备首次修改前保存的原始频段掩码，蜂窝网络可能短暂重选。"
+      : `${currentBand} 将只允许搜索 ${selected.map((band) => `B${band}`).join("、")}。切换期间网络可能短暂中断，75 秒内未恢复会自动回退。`,
+    confirmLabel: mode === "auto" ? "确认恢复" : "确认应用",
+    danger: singleBand,
+  });
+  if (!confirmed) return;
+  $("#band-apply").disabled = true;
+  $("#band-auto").disabled = true;
+  $("#band-selector").disabled = true;
+  try {
+    await api("/api/network/bands", {
+      method: "POST",
+      body: JSON.stringify({ mode, bands: mode === "preferred" ? selected : [] }),
+    });
+    notice(mode === "auto" ? "正在恢复自动选频" : "正在应用频段偏好");
+    await loadBandPreference(true);
+  } catch (error) {
+    notice(error.message);
+    await loadBandPreference(true);
+  }
+}
+
 async function loadCellularLab() {
   if (cellularLabInFlight) return;
   cellularLabInFlight = true;
@@ -821,8 +1070,9 @@ function formatTrafficBytes(value) {
     amount /= 1024;
     unit += 1;
   }
-  const digits = unit === 0 ? 0 : (amount >= 100 ? 0 : amount >= 10 ? 1 : 2);
-  return `${amount.toFixed(digits)} ${units[unit]}`;
+  const digits = unit === 0 ? 0 : (unit >= 3 ? 2 : amount >= 100 ? 0 : amount >= 10 ? 1 : 2);
+  const display = Number(amount.toFixed(digits)).toString();
+  return `${display} ${units[unit]}`;
 }
 
 function trafficGB(value) {
@@ -994,6 +1244,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     $(`#${tab.dataset.view}`).classList.add("active");
     if (tab.dataset.view === "network") {
       loadNetwork();
+      loadBandPreference();
       setCellularLabPolling(true);
     } else {
       setCellularLabPolling(false);
@@ -1113,6 +1364,9 @@ $("#clear-module-sms").addEventListener("click", async () => {
   }
 });
 $("#refresh-network").addEventListener("click", loadNetwork);
+$("#band-refresh").addEventListener("click", () => loadBandPreference());
+$("#band-apply").addEventListener("click", () => applyBandPreference("preferred"));
+$("#band-auto").addEventListener("click", () => applyBandPreference("auto"));
 $("#lab-window").addEventListener("change", renderCellularLab);
 $("#lab-sample").addEventListener("click", async () => {
   const button = $("#lab-sample");

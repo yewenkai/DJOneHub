@@ -127,6 +127,25 @@
       <p id="lab-status" class="inline-status">正在读取蜂窝实验数据...</p>
       <div id="lab-current" class="diagnostic-grid"></div>
       <div id="lab-web-results" class="lab-web-results" hidden></div>
+      <div class="section-heading">
+        <h2>频段偏好</h2>
+        <button id="band-refresh" class="secondary" type="button">重新读取</button>
+      </div>
+      <p id="band-status" class="inline-status">正在读取模块允许的 LTE 频段...</p>
+      <div class="band-preference-panel">
+        <div id="band-summary" class="diagnostic-grid"></div>
+        <p id="band-operator-note" class="band-operator-note"></p>
+        <fieldset id="band-selector" class="band-selector">
+          <legend>允许模块搜索的 LTE 频段与中国大陆运营商</legend>
+          <div id="band-options" class="band-options"></div>
+          <p id="band-selection-hint">多选适合日常使用；只选一个频段属于实验性单频锁定。</p>
+        </fieldset>
+        <div class="control-panel band-actions">
+          <button id="band-apply" type="button">应用所选频段</button>
+          <button id="band-auto" class="secondary" type="button">恢复自动选频</button>
+        </div>
+      </div>
+      <p class="inline-status">运营商标注依据中国大陆公众移动通信频率许可与常见 LTE Band 映射，不代表每个地区均已部署。设置前会按当前设备保存原始掩码；写入后若网络注册、数据附着或驻留频段在 75 秒内未恢复，DJOneHub 会自动恢复到修改前配置。</p>
       <div class="section-heading compact-heading">
         <h2>历史趋势</h2>
         <label class="range-control">时间范围

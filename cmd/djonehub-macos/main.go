@@ -78,6 +78,13 @@ type app struct {
 	labPath        string
 	labLastPersist time.Time
 
+	bandApplyMu   sync.Mutex
+	bandMu        sync.Mutex
+	bandStore     bandPreferenceStore
+	bandLoaded    bool
+	bandPath      string
+	bandOperation bandOperationState
+
 	voiceMu sync.Mutex
 	voice   *voiceService
 
@@ -752,6 +759,8 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/network/lab/sample", a.cellularLabSampleNow)
 	mux.HandleFunc("POST /api/network/lab/web-test", a.cellularLabWebTest)
 	mux.HandleFunc("POST /api/network/lab/speed-test", a.cellularLabSpeedTest)
+	mux.HandleFunc("GET /api/network/bands", a.bandPreferenceStatus)
+	mux.HandleFunc("POST /api/network/bands", a.configureBandPreference)
 	mux.HandleFunc("POST /api/network/check-4g", a.check4GRoute)
 	mux.HandleFunc("POST /api/network/check-proxy", a.checkProxyRoute)
 	mux.HandleFunc("POST /api/network/usbnet", a.setUSBNetMode)
@@ -1269,6 +1278,10 @@ func (a *app) runATCommand(command string, timeout time.Duration) (string, error
 			"AT+CSQ":             "+CSQ: 22,99\r\nOK",
 			"AT+COPS?":           "+COPS: 0,0,\"China Mobile\",7\r\nOK",
 			"AT+QNWINFO":         "+QNWINFO: \"FDD LTE\",\"46000\",\"LTE BAND 3\",1650\r\nOK",
+			"AT+QCFG=\"BAND\"":   "+QCFG: \"band\",0xbff,0x180080000c5,0x0\r\nOK",
+			"AT+CGATT?":          "+CGATT: 1\r\nOK",
+			"AT+CEREG?":          "+CEREG: 0,1\r\nOK",
+			"AT+CGSN":            "860000000000001\r\nOK",
 			"AT+QCFG=\"USBNET\"": "+QCFG: \"usbnet\",1\r\nOK",
 			"AT+QCFG=\"USBCFG\"": "+QCFG: \"usbcfg\",0x2C7C,0x0125,1,1,1,1,1,0,0\r\nOK",
 			"AT+CGDCONT?":        "+CGDCONT: 1,\"IPV4V6\",\"3gnet\",\"0.0.0.0\",0,0,0,0\r\nOK",
@@ -1428,7 +1441,8 @@ func (a *app) networkDiagnostic(w http.ResponseWriter, _ *http.Request) {
 		Raw:           raw,
 		Errors:        errs,
 	}
-	diag.USBNetworkPresent = hasLikelyUSBNetworkInterface(diag.MacInterfaces)
+	services, _ := discoverMacNetworkServices()
+	diag.USBNetworkPresent = selectDJITrafficInterface(diag.USBDevice, diag.MacInterfaces, services) != ""
 
 	commands := map[string]string{
 		"usbnet":  `AT+QCFG="usbnet"`,
@@ -1463,8 +1477,10 @@ func (a *app) networkTraffic(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	interfaces := discoverMacNetworkInterfaces()
-	name := selectUSBTrafficInterface(interfaces, discoverMacDefaultRoute())
+	services, _ := discoverMacNetworkServices()
+	name := selectDJITrafficInterface(a.currentUSBDevice(), interfaces, services)
 	if name == "" {
+		snapshot.Error = "未检测到可用的 DJI 4G USB 网卡"
 		writeJSON(w, http.StatusOK, snapshot)
 		return
 	}
@@ -1902,27 +1918,11 @@ func classifyMacInterfaceName(name string) string {
 	}
 }
 
-func hasLikelyUSBNetworkInterface(interfaces []macNetInterface) bool {
-	for _, item := range interfaces {
-		if item.Kind == "ethernet" && item.Name != "en0" && item.Status == "active" {
-			return true
-		}
+func selectDJITrafficInterface(device *usbDeviceStatus, interfaces []macNetInterface, services []macNetworkService) string {
+	if device == nil {
+		return ""
 	}
-	return false
-}
-
-func selectUSBTrafficInterface(interfaces []macNetInterface, route macDefaultRoute) string {
-	for _, item := range interfaces {
-		if item.Name == route.Interface && item.Kind == "ethernet" && item.Name != "en0" && item.Status == "active" {
-			return item.Name
-		}
-	}
-	for _, item := range interfaces {
-		if item.Kind == "ethernet" && item.Name != "en0" && item.Status == "active" {
-			return item.Name
-		}
-	}
-	return ""
+	return selectDJICellularInterface(interfaces, services)
 }
 
 func discoverMacInterfaceCounters() (map[string]networkByteCounters, error) {

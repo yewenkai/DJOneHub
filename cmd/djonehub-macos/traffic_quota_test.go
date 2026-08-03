@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -71,6 +74,69 @@ func TestTrafficQuotaSnapshotKeepsPartialManualCalibrationHonest(t *testing.T) {
 	}
 	if got.UsedKnown || !got.RemainingKnown || !got.PartialEstimate || got.Source != "manual" {
 		t.Fatalf("quota flags = %+v", got)
+	}
+}
+
+func TestTrafficQuotaSnapshotDoesNotInflateConfiguredTotalFromManualReadings(t *testing.T) {
+	now := time.Now()
+	base := gibibytes(100)
+	rollover := gibibytes(100)
+	used := gibibytes(0.96)
+	remaining := gibibytes(200)
+	legacyManualTotal := used + remaining
+	app := &app{
+		demo: true, quotaLoaded: true,
+		quota: trafficQuotaStore{
+			Month: now.Format("2006-01"), BaseQuotaBytes: base, RolloverBytes: rollover,
+			TrackingStartedAt: now, UpdatedAt: now,
+			OperatorTotalBytes: &legacyManualTotal, OperatorUsedBytes: &used,
+			OperatorRemainingBytes: &remaining, CalibrationLocalBytes: 0,
+			CalibrationSource: "manual", LastCalibrationAt: now,
+		},
+	}
+
+	got := app.trafficQuotaSnapshot()
+	if got.PlanTotalBytes != base+rollover {
+		t.Fatalf("plan total = %d, want configured total %d", got.PlanTotalBytes, base+rollover)
+	}
+	if got.UsedBytes != used || got.RemainingBytes != remaining {
+		t.Fatalf("manual readings changed: used=%d remaining=%d", got.UsedBytes, got.RemainingBytes)
+	}
+}
+
+func TestConfigureTrafficQuotaStartsFromLatestManualReading(t *testing.T) {
+	now := time.Now()
+	oldUsed := gibibytes(0.56)
+	oldRemaining := gibibytes(199.44)
+	local := gibibytes(0.4)
+	app := &app{
+		demo: true, quotaLoaded: true,
+		quota: trafficQuotaStore{
+			Month: now.Format("2006-01"), BaseQuotaBytes: gibibytes(100), RolloverBytes: gibibytes(100),
+			LocalRXBytes: local, TrackingStartedAt: now, UpdatedAt: now,
+			OperatorUsedBytes: &oldUsed, OperatorRemainingBytes: &oldRemaining,
+			CalibrationSource: "manual", LastCalibrationAt: now,
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/network/quota/config", bytes.NewBufferString(`{"manual_remaining_gb":200}`))
+	response := httptest.NewRecorder()
+
+	app.configureTrafficQuota(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if app.quota.OperatorUsedBytes == nil || *app.quota.OperatorUsedBytes != 0 {
+		t.Fatalf("used baseline = %v, want 0 derived from latest remaining reading", app.quota.OperatorUsedBytes)
+	}
+	if app.quota.OperatorRemainingBytes == nil || *app.quota.OperatorRemainingBytes != gibibytes(200) {
+		t.Fatalf("remaining baseline = %v, want 200 GB", app.quota.OperatorRemainingBytes)
+	}
+	if app.quota.CalibrationLocalBytes != local {
+		t.Fatalf("local baseline = %d, want %d", app.quota.CalibrationLocalBytes, local)
+	}
+	if app.quota.OperatorTotalBytes != nil {
+		t.Fatalf("manual update must not overwrite configured total: %d", *app.quota.OperatorTotalBytes)
 	}
 }
 

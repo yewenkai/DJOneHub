@@ -166,9 +166,15 @@ func (a *app) captureCellularLabSample(withPing bool) (cellularLabSample, error)
 	sample := cellularLabSample{SampledAtMS: time.Now().UnixMilli()}
 	interfaces := discoverMacNetworkInterfaces()
 	route := discoverMacDefaultRoute()
-	cellularInterface := selectUSBTrafficInterface(interfaces, route)
-	sample.RouteInterface = route.Interface
-	sample.CellularRoute = cellularInterface != "" && route.Interface == cellularInterface
+	if a.demo {
+		sample.RouteInterface = "en19"
+		sample.CellularRoute = true
+	} else {
+		services, _ := discoverMacNetworkServices()
+		cellularInterface := selectDJITrafficInterface(a.currentUSBDevice(), interfaces, services)
+		sample.RouteInterface = route.Interface
+		sample.CellularRoute = cellularInterface != "" && route.Interface == cellularInterface
+	}
 
 	var cell modem.ServingCellLTEInfo
 	var cellOK bool
@@ -319,7 +325,8 @@ type cellularRouteSelection struct {
 func currentCellularRouteSelection() (cellularRouteSelection, error) {
 	interfaces := discoverMacNetworkInterfaces()
 	route := discoverMacDefaultRoute()
-	cellularInterface := selectUSBTrafficInterface(interfaces, route)
+	services, _ := discoverMacNetworkServices()
+	cellularInterface := selectDJITrafficInterface(discoverDJIUSBDevice(), interfaces, services)
 	if cellularInterface == "" || route.Interface != cellularInterface {
 		return cellularRouteSelection{}, fmt.Errorf("当前默认出口是 %s，不是 4G USB 网卡；已取消网络测量", route.Interface)
 	}

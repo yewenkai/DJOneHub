@@ -102,7 +102,7 @@ func (a *app) sampleTrafficQuota() {
 	}
 	interfaces := discoverMacNetworkInterfaces()
 	services, _ := discoverMacNetworkServices()
-	name := selectDJICellularInterface(interfaces, services)
+	name := selectDJITrafficInterface(a.currentUSBDevice(), interfaces, services)
 	if name == "" {
 		return
 	}
@@ -236,7 +236,9 @@ func (a *app) trafficQuotaSnapshot() trafficQuotaResponse {
 	partial := true
 	if store.OperatorRemainingBytes != nil || store.OperatorUsedBytes != nil {
 		delta := subtractFloor(local, store.CalibrationLocalBytes)
-		if store.OperatorTotalBytes != nil {
+		// A manually entered used/remaining pair can be rounded independently by
+		// the operator. It must not redefine the configured package total.
+		if store.OperatorTotalBytes != nil && store.CalibrationSource != "manual" {
 			total = *store.OperatorTotalBytes
 		}
 		if store.OperatorUsedBytes != nil {
@@ -336,7 +338,6 @@ func (a *app) configureTrafficQuota(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "当前已用流量必须在 0 GB 到 10000 GB 之间")
 			return
 		}
-		a.quota.OperatorUsedBytes = uint64Pointer(gibibytes(*body.ManualUsedGB))
 	}
 	if body.ManualRemainingGB != nil {
 		if *body.ManualRemainingGB < 0 || *body.ManualRemainingGB > 10000 {
@@ -344,22 +345,34 @@ func (a *app) configureTrafficQuota(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "当前剩余流量必须在 0 GB 到 10000 GB 之间")
 			return
 		}
-		a.quota.OperatorRemainingBytes = uint64Pointer(gibibytes(*body.ManualRemainingGB))
 	}
 	if manualChanged {
+		planTotal := a.quota.BaseQuotaBytes + a.quota.RolloverBytes
+		a.quota.OperatorUsedBytes = nil
+		a.quota.OperatorRemainingBytes = nil
+		if body.ManualUsedGB != nil {
+			a.quota.OperatorUsedBytes = uint64Pointer(gibibytes(*body.ManualUsedGB))
+		}
+		if body.ManualRemainingGB != nil {
+			a.quota.OperatorRemainingBytes = uint64Pointer(gibibytes(*body.ManualRemainingGB))
+		}
+		if a.quota.OperatorUsedBytes == nil {
+			used := subtractFloor(planTotal, *a.quota.OperatorRemainingBytes)
+			a.quota.OperatorUsedBytes = uint64Pointer(used)
+		}
+		if a.quota.OperatorRemainingBytes == nil {
+			remaining := subtractFloor(planTotal, *a.quota.OperatorUsedBytes)
+			a.quota.OperatorRemainingBytes = uint64Pointer(remaining)
+		}
 		local := a.quota.LocalRXBytes + a.quota.LocalTXBytes
 		a.quota.CalibrationLocalBytes = local
 		a.quota.LastCalibrationAt = time.Now()
 		a.quota.CalibrationSource = "manual"
 		a.quota.LastCalibrationText = "手动校准"
-		if a.quota.OperatorUsedBytes != nil && a.quota.OperatorRemainingBytes != nil {
-			total := *a.quota.OperatorUsedBytes + *a.quota.OperatorRemainingBytes
-			a.quota.OperatorTotalBytes = uint64Pointer(total)
-		} else if a.quota.OperatorRemainingBytes != nil {
-			a.quota.OperatorTotalBytes = uint64Pointer(*a.quota.OperatorRemainingBytes)
-		} else {
-			a.quota.OperatorTotalBytes = nil
-		}
+		// Manual readings calibrate usage, while base quota plus rollover remains
+		// the authoritative package total. Used and remaining values may be
+		// rounded differently, so adding them can invent an extra gigabyte.
+		a.quota.OperatorTotalBytes = nil
 	}
 	a.quota.UpdatedAt = time.Now()
 	a.quotaMu.Unlock()
