@@ -39,6 +39,8 @@ STAGED_NOTIFIER="${NOTIFIER_PARENT}/.DJOneHubNotifier-install.$$.app"
 BACKUP_NOTIFIER="${NOTIFIER_PARENT}/.DJOneHubNotifier-backup.$$.app"
 BACKUP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/djonehub-install-state.XXXXXX")
 BACKUP_PLIST="${BACKUP_ROOT}/${NOTIFIER_LABEL}.plist"
+BACKEND_LOG_DIR="${LOGIN_HOME}/Library/Logs/DJOneHub"
+BACKEND_LOG_FILE="${BACKEND_LOG_DIR}/djonehub.log"
 
 run_privileged() {
   if [ "${DJONEHUB_INSTALL_NO_SUDO:-0}" = "1" ]; then
@@ -131,6 +133,14 @@ stop_backend() {
   fi
 }
 
+start_backend() {
+  run_as_login_user mkdir -p "${BACKEND_LOG_DIR}"
+  launchctl_as_login_user bootout "gui/${LOGIN_UID}/${BACKEND_LABEL}" >/dev/null 2>&1 || true
+  launchctl_as_login_user submit -l "${BACKEND_LABEL}" \
+    -o "${BACKEND_LOG_FILE}" -e "${BACKEND_LOG_FILE}" -- \
+    "${INSTALL_DIR}/bin/djonehub-macos" -listen 127.0.0.1:7575
+}
+
 backend_uses_installed_binary() {
   for backend_pid in $(backend_process_ids); do
     executable_path=$(/usr/sbin/lsof -a -p "${backend_pid}" -d txt -Fn 2>/dev/null | \
@@ -211,7 +221,7 @@ rollback_install() {
     fi
     if [ "${backend_stopped}" -eq 1 ] && [ "${backend_was_running}" -eq 1 ] && \
        [ -x "${COMMAND_PATH}" ]; then
-      run_as_login_user env DJONEHUB_NO_OPEN=1 "${COMMAND_PATH}" start --background >/dev/null 2>&1 || true
+      start_backend >/dev/null 2>&1 || true
     fi
   fi
   run_privileged rm -rf -- "${STAGED_INSTALL}" "${STAGED_NOTIFIER}" >/dev/null 2>&1 || true
@@ -302,7 +312,7 @@ if ! cmp -s \
 fi
 
 if [ "${backend_was_running}" -eq 1 ]; then
-  run_as_login_user env DJONEHUB_NO_OPEN=1 "${COMMAND_PATH}" start --background
+  start_backend
   if ! /usr/bin/curl -fsS --max-time 3 http://127.0.0.1:7575/api/health >/dev/null; then
     echo "安装失败：升级后端健康检查未通过。" >&2
     exit 1
