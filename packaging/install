@@ -13,6 +13,7 @@ done
 PACKAGE_DIR=$(CDPATH= cd -P -- "$(dirname -- "${SOURCE}")" && pwd)
 INSTALL_DIR=${DJONEHUB_INSTALL_DIR:-/usr/local/libexec/djonehub}
 COMMAND_PATH=${DJONEHUB_COMMAND_PATH:-/usr/local/bin/djonehub}
+BACKEND_LABEL=com.yewenkai.djonehub-backend
 NOTIFIER_LABEL=com.yewenkai.djonehub-notifier
 NOTIFIER_BUNDLE_ID=com.yewenkai.djonehub.notifier
 NOTIFIER_PROCESS=DJOneHubNotifier
@@ -109,6 +110,10 @@ backend_running() {
 }
 
 stop_backend() {
+  # Older releases used a transient KeepAlive launchd job. Remove it first so
+  # launchd cannot race the shutdown and restart the old executable while its
+  # installation directory is being moved to the rollback backup location.
+  launchctl_as_login_user bootout "gui/${LOGIN_UID}/${BACKEND_LABEL}" >/dev/null 2>&1 || true
   if [ -x "${COMMAND_PATH}" ]; then
     run_as_login_user "${COMMAND_PATH}" stop >/dev/null 2>&1 || true
   fi
@@ -124,6 +129,17 @@ stop_backend() {
     echo "安装失败：旧版 DJOneHub 后端未能退出，已停止替换。" >&2
     return 1
   fi
+}
+
+backend_uses_installed_binary() {
+  for backend_pid in $(backend_process_ids); do
+    executable_path=$(/usr/sbin/lsof -a -p "${backend_pid}" -d txt -Fn 2>/dev/null | \
+      sed -n 's/^n//p' | head -n 1)
+    if [ "${executable_path}" = "${INSTALL_DIR}/bin/djonehub-macos" ]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 backend_was_running=0
@@ -289,6 +305,10 @@ if [ "${backend_was_running}" -eq 1 ]; then
   run_as_login_user env DJONEHUB_NO_OPEN=1 "${COMMAND_PATH}" start --background
   if ! /usr/bin/curl -fsS --max-time 3 http://127.0.0.1:7575/api/health >/dev/null; then
     echo "安装失败：升级后端健康检查未通过。" >&2
+    exit 1
+  fi
+  if ! backend_uses_installed_binary; then
+    echo "安装失败：升级后端仍在使用旧版备份文件。" >&2
     exit 1
   fi
 fi
