@@ -62,6 +62,17 @@ enum SelfTest {
         ))
         precondition(state.downloadBytesPerSecond == 1_024)
         precondition(state.uploadBytesPerSecond == 512)
+        for connected in [false, true] {
+            for signalLevel in 0...4 {
+                let image = AppDelegate.cellularStatusImage(
+                    signalLevel: signalLevel,
+                    connected: connected
+                )
+                precondition(image.size.width > 0 && image.size.height > 0)
+                precondition(image.isTemplate)
+                precondition(image.accessibilityDescription?.isEmpty == false)
+            }
+        }
         print("DJOneHubNotifier self-test passed")
     }
 }
@@ -387,7 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: 44)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.autosaveName = "DJOneHubCellularStatus"
         item.button?.target = self
         item.button?.action = #selector(toggleStatusPopover)
@@ -425,32 +436,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             : "DJOneHub 后端未连接"
     }
 
-    private static func cellularStatusImage(signalLevel: Int, connected: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: 42, height: 18))
-        image.lockFocus()
-        let active = NSColor.black
-        let inactive = NSColor.black.withAlphaComponent(connected ? 0.26 : 0.14)
-        for (index, height) in [4.2, 7.4, 10.6, 13.8].enumerated() {
-            (index < signalLevel ? active : inactive).setFill()
-            NSBezierPath(
-                roundedRect: NSRect(x: CGFloat(index) * 5.2, y: 1, width: 3.6, height: height),
-                xRadius: 0.9,
-                yRadius: 0.9
-            ).fill()
-        }
-        (connected ? active : inactive).set()
-        ("4G" as NSString).draw(
-            at: NSPoint(x: 24, y: 3),
-            withAttributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
-                .foregroundColor: connected ? active : inactive,
-            ]
-        )
-        image.unlockFocus()
-        image.isTemplate = true
-        image.accessibilityDescription = connected
-            ? "DJOneHub 4G 信号 \(signalLevel) 格"
+    fileprivate static func cellularStatusImage(signalLevel: Int, connected: Bool) -> NSImage {
+        let description = connected
+            ? "DJOneHub 蜂窝网络，信号 \(signalLevel) 格"
             : "DJOneHub 后端未连接"
+        let symbolName = connected
+            ? "antenna.radiowaves.left.and.right"
+            : "antenna.radiowaves.left.and.right.slash"
+        let baseImage = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: description
+        ) ?? NSImage(
+            systemSymbolName: "network",
+            accessibilityDescription: description
+        ) ?? NSImage(size: NSSize(width: 18, height: 18))
+        let configuration = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+        let image = baseImage.withSymbolConfiguration(configuration) ?? baseImage
+        image.isTemplate = true
+        image.accessibilityDescription = description
         return image
     }
 

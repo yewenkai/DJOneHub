@@ -48,6 +48,14 @@ struct OKResponse: Codable, Sendable {
     let ok: Bool
 }
 
+private struct SessionResponse: Codable, Sendable {
+    let actionToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case actionToken = "action_token"
+    }
+}
+
 struct ModemStatus: Codable, Sendable {
     let operatorName: String?
     let signalDBM: Int?
@@ -157,8 +165,13 @@ enum APIError: LocalizedError {
     }
 }
 
-struct DJOneHubAPI: Sendable {
+actor DJOneHubAPI {
     let baseURL: URL
+    private var actionToken: String?
+
+    init(baseURL: URL) {
+        self.baseURL = baseURL
+    }
 
     func callStatus() async throws -> CallStatus {
         try await get(path: "api/voice/calls")
@@ -185,18 +198,19 @@ struct DJOneHubAPI: Sendable {
     }
 
     func hangup() async throws -> OKResponse {
-        var request = URLRequest(url: baseURL.appendingPathComponent("api/voice/hangup"))
-        request.httpMethod = "POST"
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.timeoutInterval = 5
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
+        try await post(path: "api/voice/hangup")
+    }
+
+    private func actionTokenValue(forceRefresh: Bool = false) async throws -> String {
+        if forceRefresh {
+            actionToken = nil
         }
-        guard (200..<300).contains(http.statusCode) else {
-            throw APIError.http(http.statusCode)
+        if let actionToken {
+            return actionToken
         }
-        return try JSONDecoder().decode(OKResponse.self, from: data)
+        let session: SessionResponse = try await get(path: "api/session")
+        actionToken = session.actionToken
+        return session.actionToken
     }
 
     private func get<T: Decodable & Sendable>(path: String) async throws -> T {
@@ -213,14 +227,27 @@ struct DJOneHubAPI: Sendable {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    private func post<T: Decodable & Sendable>(path: String) async throws -> T {
+    private func post<T: Decodable & Sendable>(
+        path: String,
+        allowTokenRefresh: Bool = true
+    ) async throws -> T {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = "POST"
+        request.httpBody = Data("{}".utf8)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(
+            try await actionTokenValue(),
+            forHTTPHeaderField: "X-DJOneHub-Action-Token"
+        )
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 5
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
+        }
+        if http.statusCode == 403 && allowTokenRefresh {
+            _ = try await actionTokenValue(forceRefresh: true)
+            return try await post(path: path, allowTokenRefresh: false)
         }
         guard (200..<300).contains(http.statusCode) else {
             throw APIError.http(http.statusCode)

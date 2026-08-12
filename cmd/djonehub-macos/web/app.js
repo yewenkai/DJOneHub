@@ -14,6 +14,8 @@ let currentOperator = "";
 let voiceOverview = null;
 let voiceStatusInFlight = false;
 let voiceCallsInFlight = false;
+let actionToken = "";
+let actionTokenPromise = null;
 let lastIncomingCallKey = "";
 
 function setThemePreference(theme) {
@@ -98,12 +100,54 @@ const carrierLabels = {
   telecom: "中国电信",
 };
 
-async function api(path, options = {}) {
+async function loadActionToken(force = false) {
+  if (force) {
+    actionToken = "";
+    actionTokenPromise = null;
+  }
+  if (actionToken) return actionToken;
+  if (!actionTokenPromise) {
+    actionTokenPromise = fetch("/api/session", {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.action_token) {
+          throw new Error(data.error || ("HTTP " + response.status));
+        }
+        actionToken = data.action_token;
+        return actionToken;
+      })
+      .finally(() => {
+        actionTokenPromise = null;
+      });
+  }
+  return actionTokenPromise;
+}
+
+async function api(path, options = {}, allowTokenRefresh = true) {
+  const method = String(options.method || "GET").toUpperCase();
+  const stateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(method);
+  const headers = { Accept: "application/json", ...(options.headers || {}) };
+  if (stateChanging) {
+    headers["Content-Type"] = "application/json";
+    headers["X-DJOneHub-Action-Token"] = await loadActionToken();
+  }
   const response = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers,
   });
   const data = await response.json().catch(() => ({}));
+  if (
+    response.status === 403 &&
+    data.code === "invalid_action_token" &&
+    stateChanging &&
+    allowTokenRefresh
+  ) {
+    await loadActionToken(true);
+    return api(path, options, false);
+  }
   if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
   return data;
 }

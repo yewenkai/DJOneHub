@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -100,6 +101,16 @@ type app struct {
 	networkRepairMu sync.Mutex
 	dhcpStatusMu    sync.RWMutex
 	dhcpStatus      dhcpRepairStatus
+
+	statusMu           sync.RWMutex
+	statusSnapshot     any
+	statusSampledAt    time.Time
+	statusLastError    string
+	statusPollInterval time.Duration
+	statusCollectFn    func() (any, error)
+	statusRefreshMu    sync.Mutex
+	statusRefreshing   bool
+	statusRefreshDone  chan struct{}
 }
 
 type usbInterfaceStatus struct {
@@ -315,16 +326,24 @@ func main() {
 
 func serve(instance *app, listen string) {
 	defer instance.stopVoiceService()
+	if err := validateLoopbackListen(listen); err != nil {
+		log.Fatalf("refuse unsafe HTTP listener: %v", err)
+	}
 	server := &http.Server{
 		Addr:              listen,
 		Handler:           instance.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go instance.startCellularLabSampler(ctx)
 	go instance.startCallMonitor(ctx)
 	go instance.startTrafficQuotaSampler(ctx)
+	go instance.startStatusSampler(ctx)
 
 	if !instance.demo {
 		log.Printf("DJOneHub is using %s", instance.port)
@@ -741,7 +760,14 @@ func (a *app) markUSBATDetached(reason string) {
 }
 
 func (a *app) routes() http.Handler {
+	actionToken, err := newActionToken()
+	if err != nil {
+		panic(err)
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/session", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"action_token": actionToken})
+	})
 	mux.HandleFunc("GET /api/health", a.health)
 	mux.HandleFunc("GET /api/status", a.status)
 	mux.HandleFunc("GET /api/sms", a.listSMS)
@@ -774,16 +800,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/voice/audio/stop", a.voiceAudioStop)
 	content, _ := fs.Sub(webAssets, "web")
 	mux.Handle("/", http.FileServer(http.FS(content)))
-	return securityHeaders(mux)
-}
-
-func securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		next.ServeHTTP(w, r)
-	})
+	return localControlSecurity(actionToken, mux)
 }
 
 func (a *app) health(w http.ResponseWriter, _ *http.Request) {
@@ -792,68 +809,6 @@ func (a *app) health(w http.ResponseWriter, _ *http.Request) {
 		"ok": true, "port": a.port, "demo": a.demo,
 		"usb_device": usbDevice, "discovery_error": a.discoveryError,
 	})
-}
-
-func (a *app) status(w http.ResponseWriter, _ *http.Request) {
-	if a.demo {
-		writeJSON(w, http.StatusOK, modem.DeviceStatus{
-			IMEI:          "867400000000001",
-			Firmware:      "EG25GGBR07A08M2G",
-			ICCID:         "89860123456789012345",
-			IMSI:          "460001234567890",
-			Operator:      "China Mobile",
-			SimInserted:   true,
-			SignalDBM:     -73,
-			SignalRSRP:    -96,
-			SignalRSRQ:    -9,
-			RegStatus:     1,
-			RegStatusText: "已注册",
-			NetworkMode:   "LTE",
-			NetworkDuplex: "FDD",
-			RadioBand:     "B3",
-			USBNetMode:    0,
-		})
-		return
-	}
-	if a.modem == nil {
-		// A libusb handle may survive a physical unplug. Refresh the macOS USB
-		// inventory before using it so the UI never reports a stale connection.
-		if a.usbAT != nil && a.currentUSBDevice() == nil {
-			a.markUSBATDetached("DJI USB device disconnected")
-		}
-		if err := a.ensureUSBAT(); err != nil {
-			log.Printf("USB AT retry failed: %v", err)
-		}
-		if a.usbAT != nil {
-			status, err := a.usbATStatus()
-			if err == nil {
-				writeJSON(w, http.StatusOK, status)
-				return
-			}
-			a.resetUSBATIfGone(err)
-			log.Printf("USB AT status failed: %v", err)
-		}
-		usbDevice := a.currentUSBDevice()
-		summary := "未发现 AT 串口"
-		operator := "未连接"
-		network := "不可用"
-		if usbDevice != nil {
-			summary = fmt.Sprintf("%s %s (%s:%s)", usbDevice.Vendor, usbDevice.Product, usbDevice.VendorID, usbDevice.ProductID)
-			operator = "已检测到 USB 设备"
-			network = usbDevice.Mode
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"operator":        operator,
-			"signal_dbm":      nil,
-			"network_mode":    network,
-			"sim_inserted":    false,
-			"hardware_status": summary,
-			"discovery_error": a.discoveryError,
-			"usb_device":      usbDevice,
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, a.modem.GetFullStatus())
 }
 
 func (a *app) currentUSBDevice() *usbDeviceStatus {
@@ -1956,6 +1911,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "request body must contain exactly one JSON value")
 		return false
 	}
 	return true

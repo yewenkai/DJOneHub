@@ -22,6 +22,7 @@ DJOneHub-source-minimal/
 ├── packaging/
 │   ├── djonehub              # 终端 start/stop/status/logs/open 启动器
 │   ├── install               # /usr/local 安装脚本
+│   ├── uninstall             # 完整卸载及可选用户数据清理脚本
 │   ├── README.md             # 发行包内的安装说明
 │   └── THIRD_PARTY_NOTICES.md
 ├── scripts/

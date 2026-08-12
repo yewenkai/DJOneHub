@@ -14,7 +14,7 @@ DJOneHub 是一款面向**大疆第一代 4G 模块**的第三方 macOS 管理�
 | 模块自动识别 | 已实现 | 识别大疆第一代 4G 模块，并处理拔出、重新连接和换卡 |
 | 模块状态 | 已实现 | 显示运营商、信号、网络制式、SIM 状态和当前工作模式 |
 | 短信管理 | 已实现 | 接收、发送、自动轮询、验证码提取及模块旧短信清理 |
-| 菜单栏助手 | 已实现 | 常驻 4G 图标，查看实时网速、本次流量、出口、信号与最近短信 |
+| 菜单栏助手 | 已实现 | 常驻蜂窝网络图标，查看实时网速、本次流量、出口、信号与最近短信 |
 | USB 4G 上网 | 已实现 | 切换 USB 网卡模式，让 macOS 使用 SIM 卡流量上网 |
 | 网络与流量 | 已实现 | 查看 USB 网卡、默认出口、代理连通性、实时速度和本次流量，并异步检查 DHCP |
 | 蜂窝网络实验室 | 已实现 | 记录 RSRP、RSRQ、SINR、频段、小区、延迟、丢包和手动下载测速趋势，并可设置带自动回退的 LTE 频段偏好 |
@@ -116,7 +116,7 @@ shasum -a 256 DJOneHub-*.zip
 `sudo ./install` 启动整个脚本。Swift 原生通知助手安装到“应用程序”目录，
 并注册为当前用户的登录项。它是带 Dock 图标和状态窗口的标准前台应用，只访问
 `127.0.0.1:7575`；硬件和 AT 指令仍由 Go 后端统一管理。登录自启时窗口保持隐藏，
-点击 Dock 图标即可打开。菜单栏的“信号格 + 4G”图标始终保留：即使当前默认出口
+点击 Dock 图标即可打开。菜单栏的蜂窝网络图标始终保留：即使当前默认出口
 是 Wi-Fi 或 VPN，也可以点开查看 USB 网卡、实时上下行、本次流量、信号、频段以及
 最近短信正文；出口状态会明确标注“4G 出口”或“非 4G 出口”。
 
@@ -253,6 +253,8 @@ AT 指令可以改变网络注册、PDP、USB 模式、短信存储和 SIM 状�
 
 ```text
 djonehub start          启动并自动打开管理网页
+djonehub start --background
+                        在后台启动，不自动打开网页
 djonehub start --demo   启动无硬件演示模式
 djonehub stop           停止正在运行的程序
 djonehub status         查看运行状态
@@ -286,25 +288,20 @@ djonehub stop
 
 ## 卸载
 
-先停止程序：
+发行包自带完整卸载脚本。保留日志和本地数据时执行：
 
 ```sh
-djonehub stop
+/usr/local/libexec/djonehub/uninstall
 ```
 
-删除命令入口和程序主体：
+如需同时永久删除日志、流量记录和本地配置，执行：
 
 ```sh
-sudo rm -f /usr/local/bin/djonehub
-sudo rm -rf /usr/local/libexec/djonehub
+/usr/local/libexec/djonehub/uninstall --purge
 ```
 
-如需一并删除日志和本地运行数据：
-
-```sh
-rm -rf "$HOME/Library/Logs/DJOneHub"
-rm -rf "$HOME/Library/Application Support/DJOneHub"
-```
+卸载脚本会停止后端和通知助手，并删除命令入口、程序主体、登录项及“应用程序”中的
+通知助手；默认不会删除用户数据。
 
 ## 免安装运行
 

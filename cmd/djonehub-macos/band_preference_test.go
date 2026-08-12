@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
@@ -94,7 +93,17 @@ func TestDemoBandPreferenceAPI(t *testing.T) {
 		t.Fatalf("initial=%+v", initial)
 	}
 
-	apply, err := http.Post(server.URL+"/api/network/bands", "application/json", strings.NewReader(`{"mode":"preferred","bands":[40]}`))
+	token := fetchActionToken(t, server.URL)
+	request, err := protectedJSONRequest(
+		http.MethodPost,
+		server.URL+"/api/network/bands",
+		token,
+		"{\"mode\":\"preferred\",\"bands\":[40]}",
+	)
+	if err != nil {
+		t.Fatalf("build POST bands: %v", err)
+	}
+	apply, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatalf("POST bands: %v", err)
 	}

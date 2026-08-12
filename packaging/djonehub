@@ -24,6 +24,8 @@ DJOneHub for macOS
 
 用法：
   djonehub start          启动并自动打开管理网页
+  djonehub start --background
+                          在后台启动，不自动打开网页
   djonehub start --demo   启动无硬件演示模式
   djonehub stop           停止正在运行的程序
   djonehub status         查看运行状态
@@ -35,7 +37,17 @@ EOF
 read_pid() {
   if [ -f "${PID_FILE}" ]; then
     tr -cd '0-9' <"${PID_FILE}"
+    return
   fi
+  for candidate in $(/usr/sbin/lsof -nP -t -iTCP:7575 -sTCP:LISTEN 2>/dev/null); do
+    command_line=$(ps -p "${candidate}" -o command= 2>/dev/null || true)
+    case "${command_line}" in
+      "${BINARY}"*)
+        printf '%s\n' "${candidate}"
+        return
+        ;;
+    esac
+  done
 }
 
 is_running() {
@@ -66,6 +78,7 @@ open_page() {
 
 start_service() {
   mode=${1:-}
+  detached=${2:-0}
   if [ ! -x "${BINARY}" ]; then
     printf '启动失败：缺少可执行文件 %s\n' "${BINARY}" >&2
     exit 1
@@ -92,23 +105,20 @@ start_service() {
   fi
 
   if [ "${mode}" = "--demo" ]; then
-    "${BINARY}" -listen 127.0.0.1:7575 -demo >>"${LOG_FILE}" 2>&1 &
+    if [ "${detached}" -eq 1 ]; then
+      nohup "${BINARY}" -listen 127.0.0.1:7575 -demo >>"${LOG_FILE}" 2>&1 </dev/null &
+    else
+      "${BINARY}" -listen 127.0.0.1:7575 -demo >>"${LOG_FILE}" 2>&1 &
+    fi
   else
-    "${BINARY}" -listen 127.0.0.1:7575 >>"${LOG_FILE}" 2>&1 &
+    if [ "${detached}" -eq 1 ]; then
+      nohup "${BINARY}" -listen 127.0.0.1:7575 >>"${LOG_FILE}" 2>&1 </dev/null &
+    else
+      "${BINARY}" -listen 127.0.0.1:7575 >>"${LOG_FILE}" 2>&1 &
+    fi
   fi
   child=$!
   printf '%s\n' "${child}" >"${PID_FILE}"
-
-  stopping=0
-  stop_child() {
-    if [ "${stopping}" -eq 0 ]; then
-      stopping=1
-      printf '\n正在停止 DJOneHub...\n'
-      kill -TERM "${child}" 2>/dev/null || true
-    fi
-  }
-  trap stop_child INT TERM HUP
-  trap 'rm -f "${PID_FILE}"' EXIT
 
   ready=0
   attempts=0
@@ -127,11 +137,30 @@ start_service() {
   if [ "${ready}" -eq 1 ]; then
     printf 'DJOneHub 已启动：%s\n' "${URL}"
     printf '日志文件：%s\n' "${LOG_FILE}"
+    if [ "${detached}" -eq 1 ]; then
+      printf 'DJOneHub 正在后台运行。\n'
+      return 0
+    fi
     printf '按 Ctrl+C 即可停止。\n'
     open_page
   else
     printf 'DJOneHub 未能正常启动，请查看日志：%s\n' "${LOG_FILE}" >&2
+    kill -TERM "${child}" 2>/dev/null || true
+    rm -f "${PID_FILE}"
+    wait "${child}" 2>/dev/null || true
+    exit 1
   fi
+
+  stopping=0
+  stop_child() {
+    if [ "${stopping}" -eq 0 ]; then
+      stopping=1
+      printf '\n正在停止 DJOneHub...\n'
+      kill -TERM "${child}" 2>/dev/null || true
+    fi
+  }
+  trap stop_child INT TERM HUP
+  trap 'rm -f "${PID_FILE}"' EXIT
 
   wait "${child}"
   status=$?
@@ -178,7 +207,9 @@ show_status() {
 case "${1:-}" in
   start)
     case "${2:-}" in
-      ""|--demo) start_service "${2:-}" ;;
+      "") start_service "" 0 ;;
+      --demo) start_service --demo 0 ;;
+      --background) start_service "" 1 ;;
       *) usage; exit 2 ;;
     esac
     ;;

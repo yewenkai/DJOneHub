@@ -14,6 +14,9 @@ PACKAGE_DIR=$(CDPATH= cd -P -- "$(dirname -- "${SOURCE}")" && pwd)
 INSTALL_DIR=${DJONEHUB_INSTALL_DIR:-/usr/local/libexec/djonehub}
 COMMAND_PATH=${DJONEHUB_COMMAND_PATH:-/usr/local/bin/djonehub}
 NOTIFIER_LABEL=com.yewenkai.djonehub-notifier
+NOTIFIER_BUNDLE_ID=com.yewenkai.djonehub.notifier
+NOTIFIER_PROCESS=DJOneHubNotifier
+NOTIFIER_APP="/Applications/DJOneHub 通知助手.app"
 
 if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
   LOGIN_USER=${SUDO_USER}
@@ -22,9 +25,19 @@ else
 fi
 LOGIN_UID=$(id -u "${LOGIN_USER}")
 LOGIN_HOME=$(dscl . -read "/Users/${LOGIN_USER}" NFSHomeDirectory | awk '{print $2}')
-NOTIFIER_APP="/Applications/DJOneHub 通知助手.app"
 LAUNCH_AGENTS_DIR="${LOGIN_HOME}/Library/LaunchAgents"
 NOTIFIER_PLIST="${LAUNCH_AGENTS_DIR}/${NOTIFIER_LABEL}.plist"
+SOURCE_NOTIFIER_APP="${PACKAGE_DIR}/notifier/DJOneHubNotifier.app"
+SOURCE_NOTIFIER_PLIST="${PACKAGE_DIR}/notifier/${NOTIFIER_LABEL}.plist"
+
+INSTALL_PARENT=$(dirname -- "${INSTALL_DIR}")
+NOTIFIER_PARENT=$(dirname -- "${NOTIFIER_APP}")
+STAGED_INSTALL="${INSTALL_PARENT}/.djonehub-install.$$"
+BACKUP_INSTALL="${INSTALL_PARENT}/.djonehub-backup.$$"
+STAGED_NOTIFIER="${NOTIFIER_PARENT}/.DJOneHubNotifier-install.$$.app"
+BACKUP_NOTIFIER="${NOTIFIER_PARENT}/.DJOneHubNotifier-backup.$$.app"
+BACKUP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/djonehub-install-state.XXXXXX")
+BACKUP_PLIST="${BACKUP_ROOT}/${NOTIFIER_LABEL}.plist"
 
 run_privileged() {
   if [ "${DJONEHUB_INSTALL_NO_SUDO:-0}" = "1" ]; then
@@ -50,40 +63,246 @@ launchctl_as_login_user() {
   fi
 }
 
+notifier_running() {
+  pgrep -u "${LOGIN_UID}" -x "${NOTIFIER_PROCESS}" >/dev/null 2>&1
+}
+
+wait_for_notifier_exit() {
+  attempts=0
+  while notifier_running && [ "${attempts}" -lt 40 ]; do
+    attempts=$((attempts + 1))
+    sleep 0.25
+  done
+  ! notifier_running
+}
+
+quit_notifier() {
+  launchctl_as_login_user bootout "gui/${LOGIN_UID}/${NOTIFIER_LABEL}" >/dev/null 2>&1 || true
+  run_as_login_user /usr/bin/osascript \
+    -e "if application id \"${NOTIFIER_BUNDLE_ID}\" is running then tell application id \"${NOTIFIER_BUNDLE_ID}\" to quit" \
+    >/dev/null 2>&1 || true
+  if wait_for_notifier_exit; then
+    return 0
+  fi
+  run_as_login_user pkill -TERM -x "${NOTIFIER_PROCESS}" >/dev/null 2>&1 || true
+  if ! wait_for_notifier_exit; then
+    echo "安装失败：旧版通知助手未能退出，已停止替换。" >&2
+    return 1
+  fi
+}
+
+backend_process_ids() {
+  for candidate in $(/usr/sbin/lsof -nP -t -iTCP:7575 -sTCP:LISTEN 2>/dev/null); do
+    command_line=$(ps -p "${candidate}" -o command= 2>/dev/null || true)
+    case "${command_line}" in
+      "${INSTALL_DIR}/bin/djonehub-macos"*) printf '%s\n' "${candidate}" ;;
+    esac
+  done
+}
+
+backend_running() {
+  if [ -x "${COMMAND_PATH}" ] && \
+     run_as_login_user "${COMMAND_PATH}" status 2>/dev/null | grep -q '正在运行'; then
+    return 0
+  fi
+  [ -n "$(backend_process_ids)" ]
+}
+
+stop_backend() {
+  if [ -x "${COMMAND_PATH}" ]; then
+    run_as_login_user "${COMMAND_PATH}" stop >/dev/null 2>&1 || true
+  fi
+  for backend_pid in $(backend_process_ids); do
+    kill -TERM "${backend_pid}" >/dev/null 2>&1 || true
+  done
+  attempts=0
+  while [ -n "$(backend_process_ids)" ] && [ "${attempts}" -lt 40 ]; do
+    attempts=$((attempts + 1))
+    sleep 0.25
+  done
+  if [ -n "$(backend_process_ids)" ]; then
+    echo "安装失败：旧版 DJOneHub 后端未能退出，已停止替换。" >&2
+    return 1
+  fi
+}
+
+backend_was_running=0
+backend_stopped=0
+agent_was_loaded=0
+notifier_stopped=0
+had_install=0
+had_notifier=0
+had_plist=0
+install_swapped=0
+notifier_swapped=0
+install_complete=0
+
+if backend_running; then
+  backend_was_running=1
+fi
+if launchctl_as_login_user print "gui/${LOGIN_UID}/${NOTIFIER_LABEL}" >/dev/null 2>&1; then
+  agent_was_loaded=1
+fi
+if [ -e "${INSTALL_DIR}" ]; then
+  had_install=1
+fi
+if [ -e "${NOTIFIER_APP}" ]; then
+  had_notifier=1
+fi
+if [ -f "${NOTIFIER_PLIST}" ]; then
+  had_plist=1
+  cp "${NOTIFIER_PLIST}" "${BACKUP_PLIST}"
+  chmod 755 "${BACKUP_ROOT}"
+  chmod 644 "${BACKUP_PLIST}"
+fi
+
+rollback_install() {
+  result=$?
+  trap - EXIT HUP INT TERM
+  if [ "${install_complete}" -ne 1 ]; then
+    echo "安装未完成，正在恢复原版本..." >&2
+    if [ "${notifier_stopped}" -eq 1 ]; then
+      launchctl_as_login_user bootout "gui/${LOGIN_UID}/${NOTIFIER_LABEL}" >/dev/null 2>&1 || true
+      run_as_login_user pkill -TERM -x "${NOTIFIER_PROCESS}" >/dev/null 2>&1 || true
+      wait_for_notifier_exit || true
+    fi
+    if [ "${backend_stopped}" -eq 1 ] && [ -x "${COMMAND_PATH}" ]; then
+      stop_backend >/dev/null 2>&1 || true
+    fi
+
+    if [ "${notifier_swapped}" -eq 1 ]; then
+      run_privileged rm -rf -- "${NOTIFIER_APP}"
+      if [ "${had_notifier}" -eq 1 ] && [ -e "${BACKUP_NOTIFIER}" ]; then
+        run_privileged mv "${BACKUP_NOTIFIER}" "${NOTIFIER_APP}"
+      fi
+    fi
+    if [ "${install_swapped}" -eq 1 ]; then
+      run_privileged rm -rf -- "${INSTALL_DIR}"
+      if [ "${had_install}" -eq 1 ] && [ -e "${BACKUP_INSTALL}" ]; then
+        run_privileged mv "${BACKUP_INSTALL}" "${INSTALL_DIR}"
+      fi
+    fi
+    if [ "${had_plist}" -eq 1 ]; then
+      run_as_login_user mkdir -p "${LAUNCH_AGENTS_DIR}"
+      run_as_login_user cp "${BACKUP_PLIST}" "${NOTIFIER_PLIST}"
+      run_as_login_user chmod 644 "${NOTIFIER_PLIST}"
+    else
+      run_as_login_user rm -f -- "${NOTIFIER_PLIST}"
+    fi
+    if [ "${notifier_stopped}" -eq 1 ] && [ "${agent_was_loaded}" -eq 1 ] && \
+       [ -f "${NOTIFIER_PLIST}" ] && [ -e "${NOTIFIER_APP}" ]; then
+      launchctl_as_login_user bootstrap "gui/${LOGIN_UID}" "${NOTIFIER_PLIST}" >/dev/null 2>&1 || true
+    fi
+    if [ "${backend_stopped}" -eq 1 ] && [ "${backend_was_running}" -eq 1 ] && \
+       [ -x "${COMMAND_PATH}" ]; then
+      run_as_login_user env DJONEHUB_NO_OPEN=1 "${COMMAND_PATH}" start --background >/dev/null 2>&1 || true
+    fi
+  fi
+  run_privileged rm -rf -- "${STAGED_INSTALL}" "${STAGED_NOTIFIER}" >/dev/null 2>&1 || true
+  rm -rf -- "${BACKUP_ROOT}"
+  exit "${result}"
+}
+trap rollback_install EXIT HUP INT TERM
+
 if [ "$(uname -m)" != "arm64" ]; then
   echo "当前安装包仅支持 Apple Silicon（M 系列芯片）。" >&2
   exit 1
 fi
-if [ ! -x "${PACKAGE_DIR}/djonehub" ] || [ ! -x "${PACKAGE_DIR}/bin/djonehub-macos" ] || \
-   [ ! -x "${PACKAGE_DIR}/notifier/DJOneHubNotifier.app/Contents/MacOS/DJOneHubNotifier" ]; then
+if [ ! -x "${PACKAGE_DIR}/djonehub" ] || [ ! -x "${PACKAGE_DIR}/uninstall" ] || \
+   [ ! -x "${PACKAGE_DIR}/bin/djonehub-macos" ] || \
+   [ ! -x "${SOURCE_NOTIFIER_APP}/Contents/MacOS/DJOneHubNotifier" ] || \
+   [ ! -f "${SOURCE_NOTIFIER_PLIST}" ]; then
   echo "安装失败：发行包内容不完整，请重新解压整个 ZIP。" >&2
   exit 1
 fi
 
-if [ -x "${COMMAND_PATH}" ]; then
-  "${COMMAND_PATH}" stop >/dev/null 2>&1 || true
+if [ "${backend_was_running}" -eq 1 ]; then
+  backend_stopped=1
+  stop_backend
 fi
+notifier_stopped=1
+quit_notifier
 
 echo "DJOneHub 将安装到 ${INSTALL_DIR}"
 echo "macOS 可能要求输入当前用户的管理员密码。"
 
-run_privileged mkdir -p "${INSTALL_DIR}" "$(dirname -- "${COMMAND_PATH}")"
-run_privileged ditto --norsrc --noextattr --noqtn --noacl "${PACKAGE_DIR}" "${INSTALL_DIR}"
-run_privileged chmod 755 "${INSTALL_DIR}/djonehub" "${INSTALL_DIR}/bin/djonehub-macos" "${INSTALL_DIR}/lib/libusb-1.0.0.dylib"
+run_privileged mkdir -p "${INSTALL_PARENT}" "$(dirname -- "${COMMAND_PATH}")"
+run_privileged mkdir "${STAGED_INSTALL}"
+run_privileged ditto --norsrc --noextattr --noqtn --noacl "${PACKAGE_DIR}" "${STAGED_INSTALL}"
+run_privileged chmod 755 \
+  "${STAGED_INSTALL}/djonehub" \
+  "${STAGED_INSTALL}/bin/djonehub-macos" \
+  "${STAGED_INSTALL}/lib/libusb-1.0.0.dylib"
+if ! cmp -s "${PACKAGE_DIR}/bin/djonehub-macos" "${STAGED_INSTALL}/bin/djonehub-macos"; then
+  echo "安装失败：后端暂存副本校验不一致。" >&2
+  exit 1
+fi
+codesign --verify --strict --verbose=2 "${STAGED_INSTALL}/bin/djonehub-macos"
+codesign --verify --strict --verbose=2 "${STAGED_INSTALL}/lib/libusb-1.0.0.dylib"
+
+run_privileged ditto --norsrc --noextattr --noqtn --noacl "${SOURCE_NOTIFIER_APP}" "${STAGED_NOTIFIER}"
+codesign --verify --deep --strict --verbose=2 "${STAGED_NOTIFIER}"
+plutil -lint "${STAGED_NOTIFIER}/Contents/Info.plist"
+if ! cmp -s \
+  "${SOURCE_NOTIFIER_APP}/Contents/MacOS/DJOneHubNotifier" \
+  "${STAGED_NOTIFIER}/Contents/MacOS/DJOneHubNotifier"; then
+  echo "安装失败：通知助手暂存副本校验不一致。" >&2
+  exit 1
+fi
+
+if [ "${had_install}" -eq 1 ]; then
+  run_privileged mv "${INSTALL_DIR}" "${BACKUP_INSTALL}"
+fi
+install_swapped=1
+run_privileged mv "${STAGED_INSTALL}" "${INSTALL_DIR}"
 run_privileged ln -sfn "${INSTALL_DIR}/djonehub" "${COMMAND_PATH}"
 
-launchctl_as_login_user bootout "gui/${LOGIN_UID}/${NOTIFIER_LABEL}" >/dev/null 2>&1 || true
-run_privileged ditto --norsrc --noextattr --noqtn --noacl \
-  "${PACKAGE_DIR}/notifier/DJOneHubNotifier.app" "${NOTIFIER_APP}"
+if [ "${had_notifier}" -eq 1 ]; then
+  run_privileged mv "${NOTIFIER_APP}" "${BACKUP_NOTIFIER}"
+fi
+notifier_swapped=1
+run_privileged mv "${STAGED_NOTIFIER}" "${NOTIFIER_APP}"
+
 run_as_login_user mkdir -p "${LAUNCH_AGENTS_DIR}"
-run_as_login_user cp "${PACKAGE_DIR}/notifier/${NOTIFIER_LABEL}.plist" "${NOTIFIER_PLIST}"
+run_as_login_user cp "${SOURCE_NOTIFIER_PLIST}" "${NOTIFIER_PLIST}"
 run_as_login_user chmod 644 "${NOTIFIER_PLIST}"
 launchctl_as_login_user bootstrap "gui/${LOGIN_UID}" "${NOTIFIER_PLIST}"
+
+attempts=0
+while ! notifier_running && [ "${attempts}" -lt 40 ]; do
+  attempts=$((attempts + 1))
+  sleep 0.25
+done
+if ! notifier_running; then
+  echo "安装失败：通知助手重新启动超时。" >&2
+  exit 1
+fi
+
+if ! cmp -s \
+  "${SOURCE_NOTIFIER_APP}/Contents/MacOS/DJOneHubNotifier" \
+  "${NOTIFIER_APP}/Contents/MacOS/DJOneHubNotifier"; then
+  echo "安装失败：已安装通知助手与发行包不一致。" >&2
+  exit 1
+fi
+
+if [ "${backend_was_running}" -eq 1 ]; then
+  run_as_login_user env DJONEHUB_NO_OPEN=1 "${COMMAND_PATH}" start --background
+  if ! /usr/bin/curl -fsS --max-time 3 http://127.0.0.1:7575/api/health >/dev/null; then
+    echo "安装失败：升级后端健康检查未通过。" >&2
+    exit 1
+  fi
+fi
+
+install_complete=1
+run_privileged rm -rf -- "${BACKUP_INSTALL}" "${BACKUP_NOTIFIER}" >/dev/null 2>&1 || true
 
 echo
 echo "DJOneHub 安装完成。现在可以在任意目录执行："
 echo "  djonehub start"
 echo "DJOneHub 通知助手已安装到 ${NOTIFIER_APP}，并为 ${LOGIN_USER} 启动。"
+if [ "${backend_was_running}" -eq 1 ]; then
+  echo "升级前运行中的 DJOneHub 后端已恢复为后台运行。"
+fi
 echo
-echo "停止程序："
-echo "  djonehub stop"
+echo "卸载程序："
+echo "  ${INSTALL_DIR}/uninstall"
