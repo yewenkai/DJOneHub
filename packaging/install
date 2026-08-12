@@ -152,6 +152,18 @@ backend_uses_installed_binary() {
   return 1
 }
 
+wait_for_backend_health() {
+  attempts=0
+  while [ "${attempts}" -lt 50 ]; do
+    if /usr/bin/curl -fsS --max-time 1 http://127.0.0.1:7575/api/health >/dev/null; then
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.2
+  done
+  return 1
+}
+
 backend_was_running=0
 backend_stopped=0
 agent_was_loaded=0
@@ -313,7 +325,7 @@ fi
 
 if [ "${backend_was_running}" -eq 1 ]; then
   start_backend
-  if ! /usr/bin/curl -fsS --max-time 3 http://127.0.0.1:7575/api/health >/dev/null; then
+  if ! wait_for_backend_health; then
     echo "安装失败：升级后端健康检查未通过。" >&2
     exit 1
   fi
