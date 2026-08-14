@@ -3,15 +3,16 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gen2brain/malgo"
 )
-
-const voiceSampleRate = uint32(8000)
 
 type coreAudioBridge struct {
 	mu              sync.Mutex
@@ -25,6 +26,9 @@ type coreAudioBridge struct {
 	inventoryLoaded bool
 	moduleLevel     atomic.Uint32
 	macLevel        atomic.Uint32
+	recordingMu     sync.Mutex
+	recorder        atomic.Pointer[stereoCallRecorder]
+	recordingStatus voiceRecordingStatus
 }
 
 type selectedVoiceDevices struct {
@@ -113,13 +117,27 @@ func (b *coreAudioBridge) Start() error {
 	if err != nil {
 		return b.recordStartError(fmt.Errorf("初始化 CoreAudio 失败: %w", err))
 	}
-	downlink, err := initDuplexVoiceDevice(context, selected.moduleCapture, selected.macPlayback, &b.moduleLevel)
+	downlink, err := initDuplexVoiceDevice(
+		context, selected.moduleCapture, selected.macPlayback, &b.moduleLevel,
+		func(input []byte) {
+			if recorder := b.recorder.Load(); recorder != nil {
+				recorder.PushRemote(input)
+			}
+		},
+	)
 	if err != nil {
 		_ = context.Uninit()
 		context.Free()
 		return b.recordStartError(fmt.Errorf("打开模块下行音频失败: %w", err))
 	}
-	uplink, err := initDuplexVoiceDevice(context, selected.macCapture, selected.modulePlayback, &b.macLevel)
+	uplink, err := initDuplexVoiceDevice(
+		context, selected.macCapture, selected.modulePlayback, &b.macLevel,
+		func(input []byte) {
+			if recorder := b.recorder.Load(); recorder != nil {
+				recorder.PushLocal(input)
+			}
+		},
+	)
 	if err != nil {
 		downlink.Uninit()
 		_ = context.Uninit()
@@ -170,6 +188,7 @@ func (b *coreAudioBridge) recordStartError(err error) error {
 }
 
 func (b *coreAudioBridge) Stop() {
+	_, _ = b.StopRecording()
 	b.mu.Lock()
 	if !b.status.Running && !b.status.Stopping {
 		b.mu.Unlock()
@@ -202,6 +221,63 @@ func (b *coreAudioBridge) Stop() {
 	}()
 }
 
+func (b *coreAudioBridge) StartRecording() (voiceRecordingStatus, error) {
+	b.recordingMu.Lock()
+	defer b.recordingMu.Unlock()
+	if recorder := b.recorder.Load(); recorder != nil {
+		return b.recordingStatus, nil
+	}
+	b.mu.Lock()
+	running := b.status.Running
+	b.mu.Unlock()
+	if !running {
+		err := errors.New("请先启动 Mac 双向音频桥，再开始录音")
+		b.recordingStatus.LastError = err.Error()
+		return b.recordingStatus, err
+	}
+	directory, err := voiceRecordingsDirectory()
+	if err != nil {
+		b.recordingStatus.LastError = err.Error()
+		return b.recordingStatus, err
+	}
+	now := time.Now()
+	recorder, err := newStereoCallRecorder(directory, now)
+	if err != nil {
+		b.recordingStatus.LastError = err.Error()
+		return b.recordingStatus, err
+	}
+	b.recorder.Store(recorder)
+	b.recordingStatus = voiceRecordingStatus{
+		Running:   true,
+		StartedAt: &now,
+		FileName:  filepath.Base(recorder.finalPath),
+		Path:      recorder.finalPath,
+	}
+	return b.recordingStatus, nil
+}
+
+func (b *coreAudioBridge) StopRecording() (voiceRecordingStatus, error) {
+	b.recordingMu.Lock()
+	defer b.recordingMu.Unlock()
+	recorder := b.recorder.Swap(nil)
+	if recorder == nil {
+		return b.recordingStatus, nil
+	}
+	status, err := recorder.Stop()
+	b.recordingStatus = status
+	return status, err
+}
+
+func (b *coreAudioBridge) RecordingStatus() voiceRecordingStatus {
+	b.recordingMu.Lock()
+	defer b.recordingMu.Unlock()
+	status := b.recordingStatus
+	if status.Running && status.StartedAt != nil {
+		status.DurationMilliseconds = time.Since(*status.StartedAt).Milliseconds()
+	}
+	return status
+}
+
 func (b *coreAudioBridge) Status() voiceAudioStatus {
 	b.mu.Lock()
 	status := b.status
@@ -211,7 +287,12 @@ func (b *coreAudioBridge) Status() voiceAudioStatus {
 	return status
 }
 
-func initDuplexVoiceDevice(context *malgo.AllocatedContext, capture, playback malgo.DeviceInfo, level *atomic.Uint32) (*malgo.Device, error) {
+func initDuplexVoiceDevice(
+	context *malgo.AllocatedContext,
+	capture, playback malgo.DeviceInfo,
+	level *atomic.Uint32,
+	onPCM func([]byte),
+) (*malgo.Device, error) {
 	config := malgo.DefaultDeviceConfig(malgo.Duplex)
 	config.Capture.DeviceID = capture.ID.Pointer()
 	config.Capture.Format = malgo.FormatS16
@@ -227,6 +308,9 @@ func initDuplexVoiceDevice(context *malgo.AllocatedContext, capture, playback ma
 		clear(output)
 		copy(output, input)
 		level.Store(pcmPeakPercent(input))
+		if onPCM != nil {
+			onPCM(input)
+		}
 	}}
 	return malgo.InitDevice(context.Context, config, callbacks)
 }

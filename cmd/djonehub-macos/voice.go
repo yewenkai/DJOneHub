@@ -23,16 +23,17 @@ type voiceCall struct {
 }
 
 type voiceOverview struct {
-	Available  bool                `json:"available"`
-	Calls      []voiceCall         `json:"calls"`
-	Audio      voiceAudioStatus    `json:"audio"`
-	Inventory  voiceAudioInventory `json:"inventory"`
-	UACEnabled bool                `json:"uac_enabled"`
-	AudioRoute bool                `json:"audio_route"`
-	USBCfg     string              `json:"usbcfg,omitempty"`
-	IMS        string              `json:"ims,omitempty"`
-	Warning    string              `json:"warning,omitempty"`
-	LastError  string              `json:"last_error,omitempty"`
+	Available  bool                 `json:"available"`
+	Calls      []voiceCall          `json:"calls"`
+	Audio      voiceAudioStatus     `json:"audio"`
+	Recording  voiceRecordingStatus `json:"recording"`
+	Inventory  voiceAudioInventory  `json:"inventory"`
+	UACEnabled bool                 `json:"uac_enabled"`
+	AudioRoute bool                 `json:"audio_route"`
+	USBCfg     string               `json:"usbcfg,omitempty"`
+	IMS        string               `json:"ims,omitempty"`
+	Warning    string               `json:"warning,omitempty"`
+	LastError  string               `json:"last_error,omitempty"`
 }
 
 type voiceService struct {
@@ -83,6 +84,7 @@ func (a *app) voiceCalls(w http.ResponseWriter, _ *http.Request) {
 		"polling": snapshot.Polling, "poll_interval_s": int(snapshot.PollInterval.Seconds()),
 		"last_poll": snapshot.LastPoll, "last_poll_error": snapshot.LastPollError,
 		"audio": service.audio.Status(), "audio_route": audioRoute,
+		"recording": service.audio.RecordingStatus(),
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -138,12 +140,31 @@ func (a *app) voiceAudioStop(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (a *app) voiceRecordingStart(w http.ResponseWriter, _ *http.Request) {
+	status, err := a.currentVoiceService().audio.StartRecording()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "recording": status})
+}
+
+func (a *app) voiceRecordingStop(w http.ResponseWriter, _ *http.Request) {
+	status, err := a.currentVoiceService().audio.StopRecording()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "recording": status})
+}
+
 func (s *voiceService) Overview(calls []voiceCall, callError string) voiceOverview {
 	if s.demo {
 		return voiceOverview{
 			Available: true,
 			Calls:     []voiceCall{},
 			Audio:     s.audio.Status(),
+			Recording: s.audio.RecordingStatus(),
 			Inventory: voiceAudioInventory{
 				Available: true, ModuleCapture: "AC Interface", ModulePlayback: "AS Interface",
 				MacCapture: "MacBook Pro 麦克风", MacPlayback: "MacBook Pro 扬声器",
@@ -153,7 +174,10 @@ func (s *voiceService) Overview(calls []voiceCall, callError string) voiceOvervi
 		}
 	}
 
-	overview := voiceOverview{Calls: append([]voiceCall(nil), calls...), Audio: s.audio.Status()}
+	overview := voiceOverview{
+		Calls: append([]voiceCall(nil), calls...), Audio: s.audio.Status(),
+		Recording: s.audio.RecordingStatus(),
+	}
 	overview.Inventory = s.audio.Inventory()
 	overview.UACEnabled = overview.Inventory.Available
 	if callError == "" {

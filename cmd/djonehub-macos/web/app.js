@@ -17,6 +17,9 @@ let voiceCallsInFlight = false;
 let actionToken = "";
 let actionTokenPromise = null;
 let lastIncomingCallKey = "";
+let egressPolicyDraft = null;
+let egressInstalledApps = [];
+let egressLoading = false;
 
 function setThemePreference(theme) {
   if (theme === "light" || theme === "dark") {
@@ -429,7 +432,7 @@ const voiceCallStateNames = {
   unknown: "未知状态",
 };
 
-function renderVoiceCalls(calls, audio) {
+function renderVoiceCalls(calls, audio, recording) {
   const list = $("#voice-calls");
   const rows = Array.isArray(calls) ? calls : [];
   const incoming = rows.find((call) => call.state === "incoming" || call.state === "waiting");
@@ -437,6 +440,8 @@ function renderVoiceCalls(calls, audio) {
   $("#call-hangup").disabled = rows.length === 0;
   $("#voice-audio-start").disabled = Boolean(audio?.running || audio?.stopping);
   $("#voice-audio-stop").disabled = !audio?.running || Boolean(audio?.stopping);
+  $("#voice-recording-start").disabled = !audio?.running || Boolean(recording?.running);
+  $("#voice-recording-stop").disabled = !recording?.running;
 
   if (incoming) {
     const key = `${incoming.id}:${incoming.number || "unknown"}`;
@@ -497,6 +502,7 @@ function renderVoiceOverview(overview) {
   voiceOverview = overview;
   const inventory = overview.inventory || {};
   const audio = overview.audio || {};
+  const recording = overview.recording || {};
   $("#voice-audio-grid").replaceChildren(
     diagnosticCard("USB Audio", overview.uac_enabled ? "已识别" : "未识别", inventory.error || "AC / AS Interface"),
     diagnosticCard("模块下行", inventory.module_capture || audio.module_capture || "--", "模块通话音频 → Mac"),
@@ -507,6 +513,13 @@ function renderVoiceOverview(overview) {
     diagnosticCard("模块下行电平", `${audio.module_level || 0}%`, "对方声音进入模块 USB Audio"),
     diagnosticCard("Mac 麦克风电平", `${audio.mac_level || 0}%`, "本机声音送往模块 USB Audio"),
     diagnosticCard("音频桥", audio.running ? "运行中" : (audio.stopping ? "正在停止" : "已停止"), audio.running ? `${audio.sample_rate || 8000} Hz · 单声道` : (audio.last_error || "需要时手动或随拨号启动")),
+    diagnosticCard(
+      "通话录音",
+      recording.running ? "录音中" : (recording.file_name ? "已保存" : "未开始"),
+      recording.running
+        ? `${recording.file_name || "WAV"} · ${Math.floor(Number(recording.duration_ms || 0) / 1000)} 秒`
+        : (recording.path || recording.last_error || "左声道对方 · 右声道本机"),
+    ),
   );
   const messages = [
     overview.ims ? `IMS ${overview.ims}` : "",
@@ -514,7 +527,7 @@ function renderVoiceOverview(overview) {
     overview.last_error ? `最近提示：${overview.last_error}` : "",
   ].filter(Boolean);
   $("#voice-status").textContent = messages.join(" · ") || "通话控制已就绪";
-  renderVoiceCalls(overview.calls, audio);
+  renderVoiceCalls(overview.calls, audio, recording);
 }
 
 async function loadVoiceOverview() {
@@ -534,12 +547,13 @@ async function loadVoiceCalls() {
   voiceCallsInFlight = true;
   try {
     const status = await api("/api/voice/calls");
-    renderVoiceCalls(status.calls, status.audio);
+    renderVoiceCalls(status.calls, status.audio, status.recording);
     renderVoiceHistory(status.history);
     if (voiceOverview) {
       voiceOverview.calls = status.calls;
       voiceOverview.audio = status.audio;
       voiceOverview.audio_route = status.audio_route;
+      voiceOverview.recording = status.recording;
       renderVoiceOverview(voiceOverview);
     }
   } catch (_) {
@@ -1281,6 +1295,219 @@ async function rebootModule() {
   }
 }
 
+function egressOption(value, label, selected) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  option.selected = value === selected;
+  return option;
+}
+
+function renderEgressDestinations(rules = []) {
+  const list = $("#egress-destinations");
+  list.replaceChildren(...rules.map((rule) => {
+    const row = document.createElement("div");
+    row.className = "egress-rule-row destination";
+    const kind = document.createElement("select");
+    kind.className = "egress-destination-kind";
+    kind.append(
+      egressOption("domain", "网站域名", rule.kind),
+      egressOption("ip", "IPv4 地址", rule.kind),
+      egressOption("cidr", "IPv4 CIDR", rule.kind),
+    );
+    const value = document.createElement("input");
+    value.className = "egress-destination-value";
+    value.value = rule.value || "";
+    value.placeholder = rule.kind === "domain" ? "例如 example.com" : "例如 203.0.113.10";
+    value.spellcheck = false;
+    const policy = document.createElement("select");
+    policy.className = "egress-destination-policy";
+    policy.append(
+      egressOption("corporate_direct", "公司网络直连", rule.policy),
+      egressOption("cellular_direct", "4G 模块直连", rule.policy),
+    );
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "secondary danger compact";
+    remove.textContent = "移除";
+    remove.addEventListener("click", () => row.remove());
+    row.append(kind, value, policy, remove);
+    return row;
+  }));
+}
+
+function renderEgressApplications(rules = []) {
+  const list = $("#egress-applications");
+  list.replaceChildren(...rules.map((rule) => {
+    const row = document.createElement("div");
+    row.className = "egress-rule-row application";
+    row.dataset.app = JSON.stringify(rule);
+    const identity = document.createElement("div");
+    identity.className = "egress-app-identity";
+    const name = document.createElement("strong");
+    name.textContent = rule.name || rule.path;
+    const path = document.createElement("small");
+    path.textContent = rule.bundle_id ? `${rule.bundle_id} · ${rule.path}` : rule.path;
+    identity.append(name, path);
+    const policy = document.createElement("select");
+    policy.className = "egress-application-policy";
+    policy.append(
+      egressOption("follow_global", "跟随全局", rule.policy),
+      egressOption("corporate_direct", "公司网络直连", rule.policy),
+      egressOption("cellular_direct", "4G 模块直连", rule.policy),
+      egressOption("vpn", "走 VPN（随全局底层）", rule.policy),
+    );
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "secondary danger compact";
+    remove.textContent = "移除";
+    remove.addEventListener("click", () => row.remove());
+    row.append(identity, policy, remove);
+    return row;
+  }));
+}
+
+function collectEgressPolicy() {
+  const destinations = [...document.querySelectorAll("#egress-destinations .destination")]
+    .map((row) => ({
+      kind: row.querySelector(".egress-destination-kind").value,
+      value: row.querySelector(".egress-destination-value").value.trim(),
+      policy: row.querySelector(".egress-destination-policy").value,
+    }))
+    .filter((rule) => rule.value);
+  const applications = [...document.querySelectorAll("#egress-applications .application")].map((row) => {
+    const rule = JSON.parse(row.dataset.app);
+    rule.policy = row.querySelector(".egress-application-policy").value;
+    return rule;
+  });
+  return {
+    enabled: $("#egress-enabled").checked,
+    global_underlay: $("#egress-underlay").value,
+    vpn_policy: $("#egress-vpn-policy").value.trim(),
+    corporate_cidrs: $("#egress-cidrs").value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+    destinations,
+    applications,
+  };
+}
+
+function populateEgressForm(policy) {
+  egressPolicyDraft = policy;
+  $("#egress-enabled").checked = policy.enabled !== false;
+  $("#egress-underlay").value = policy.global_underlay || "corporate";
+  $("#egress-vpn-policy").value = policy.vpn_policy || "Proxy";
+  $("#egress-cidrs").value = (policy.corporate_cidrs || []).join("\n");
+  renderEgressDestinations(policy.destinations || []);
+  renderEgressApplications(policy.applications || []);
+}
+
+function renderEgressPreview(preview) {
+  const runtime = preview.runtime || {};
+  const corporate = runtime.corporate || {};
+  const cellular = runtime.cellular || {};
+  const client = runtime.client || {};
+  $("#egress-runtime").replaceChildren(
+    diagnosticCard("当前逻辑出口", runtime.logical_interface || "未知", runtime.tunnel_active ? "VPN 隧道已启用" : "当前未走 VPN 隧道"),
+    diagnosticCard("当前实体出口", runtime.physical_name || runtime.physical_interface || "未知", runtime.physical_interface || ""),
+    diagnosticCard("公司网络", corporate.ready ? `${corporate.interface} → ${corporate.gateway}` : "未就绪", corporate.service || "未发现服务"),
+    diagnosticCard("4G 模块", cellular.ready ? `${cellular.interface} → ${cellular.gateway}` : "未就绪", cellular.service || "未发现服务"),
+    diagnosticCard("Stash 客户端", client.platform || "未确认", client.detail || ""),
+    diagnosticCard("应用规则", client.process_rules_supported ? "可生效" : "当前不生效", `${preview.application_count || 0} 个应用已配置`),
+  );
+  $("#egress-status").textContent = runtime.tunnel_active
+    ? `VPN 当前由 ${runtime.physical_name || runtime.physical_interface || "未知实体网络"} 承载`
+    : `当前默认出口是 ${runtime.physical_name || runtime.physical_interface || "未知实体网络"}`;
+
+  const warning = $("#egress-warning");
+  const warnings = preview.warnings || [];
+  warning.hidden = warnings.length === 0;
+  warning.replaceChildren();
+  if (warnings.length) {
+    const list = document.createElement("ul");
+    warnings.forEach((message) => {
+      const item = document.createElement("li");
+      item.textContent = message;
+      list.append(item);
+    });
+    warning.append(list);
+  }
+
+  const serviceList = document.createElement("ul");
+  (preview.service_order || []).forEach((service, index) => {
+    const item = document.createElement("li");
+    item.textContent = `${index + 1}. ${service}`;
+    serviceList.append(item);
+  });
+  const routeList = document.createElement("ul");
+  (preview.routes || []).forEach((route) => {
+    const item = document.createElement("li");
+    if (route.kind === "domain" && !route.resolved?.length) {
+      item.textContent = `${route.target} → 仅生成 Stash 域名规则（未写系统路由）`;
+    } else {
+      const resolution = route.resolved?.length ? `（${route.resolved.join(", ")}）` : "";
+      item.textContent = `${route.target}${resolution} → ${route.interface || "?"} / ${route.gateway || "?"}`;
+    }
+    routeList.append(item);
+  });
+  if (!(preview.routes || []).length) {
+    const item = document.createElement("li");
+    item.textContent = "没有目标路由";
+    routeList.append(item);
+  }
+  const serviceBlock = document.createElement("div");
+  serviceBlock.className = "egress-preview-block";
+  const serviceTitle = document.createElement("h3");
+  serviceTitle.textContent = "macOS 网络服务顺序";
+  serviceBlock.append(serviceTitle, serviceList);
+  const routeBlock = document.createElement("div");
+  routeBlock.className = "egress-preview-block";
+  const routeTitle = document.createElement("h3");
+  routeTitle.textContent = "目标路由";
+  routeBlock.append(routeTitle, routeList);
+  const grid = document.createElement("div");
+  grid.className = "egress-preview-grid";
+  grid.append(serviceBlock, routeBlock);
+  const code = document.createElement("pre");
+  code.textContent = preview.stash_override || "# 尚未生成 Override";
+  $("#egress-preview-panel").replaceChildren(grid, code);
+  $("#egress-apply").disabled = !preview.can_apply;
+  $("#egress-restore").disabled = !preview.can_restore;
+}
+
+async function loadEgressPolicy() {
+  if (egressLoading) return;
+  egressLoading = true;
+  try {
+    const [result, appsResult] = await Promise.all([
+      api("/api/egress"),
+      egressInstalledApps.length ? Promise.resolve({ applications: egressInstalledApps }) : api("/api/egress/apps"),
+    ]);
+    egressInstalledApps = appsResult.applications || [];
+    const picker = $("#egress-app-picker");
+    picker.replaceChildren(egressOption("", "选择已安装应用...", ""), ...egressInstalledApps.map((app, index) => egressOption(String(index), app.name, "")));
+    populateEgressForm(result.policy || {});
+    renderEgressPreview(result.preview || {});
+  } catch (error) {
+    $("#egress-status").textContent = `读取出口策略失败：${error.message}`;
+    notice(error.message);
+  } finally {
+    egressLoading = false;
+  }
+}
+
+async function persistEgressPolicyFromForm(showNotice = true) {
+  const result = await api("/api/egress", { method: "PUT", body: JSON.stringify(collectEgressPolicy()) });
+  populateEgressForm(result.policy || {});
+  renderEgressPreview(result.preview || {});
+  if (showNotice) notice("出口策略已保存，尚未改动当前网络");
+  return result;
+}
+
+async function previewEgressPolicyFromForm() {
+  const preview = await api("/api/egress/preview", { method: "POST", body: JSON.stringify(collectEgressPolicy()) });
+  renderEgressPreview(preview);
+  notice("预览已更新，当前网络没有变化");
+}
+
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     document.querySelectorAll(".tab, .view").forEach((el) => el.classList.remove("active"));
@@ -1294,6 +1521,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
       setCellularLabPolling(false);
     }
     if (tab.dataset.view === "voice") loadVoiceOverview();
+    if (tab.dataset.view === "egress") loadEgressPolicy();
   });
 });
 
@@ -1362,6 +1590,20 @@ $("#voice-audio-start").addEventListener("click", () => runVoiceAction(
 ));
 $("#voice-audio-stop").addEventListener("click", () => runVoiceAction(
   $("#voice-audio-stop"), "/api/voice/audio/stop", {}, "Mac 双向音频桥已停止",
+));
+$("#voice-recording-start").addEventListener("click", async () => {
+  const confirmed = await showModal({
+    title: "开始通话录音",
+    message: "将把对方声音和本机麦克风分别写入 WAV 左右声道。开始前请确认已告知通话对方并取得必要同意。",
+    confirmLabel: "开始录音",
+  });
+  if (!confirmed) return;
+  await runVoiceAction(
+    $("#voice-recording-start"), "/api/voice/recording/start", {}, "通话录音已开始",
+  );
+});
+$("#voice-recording-stop").addEventListener("click", () => runVoiceAction(
+  $("#voice-recording-stop"), "/api/voice/recording/stop", {}, "通话录音已保存到本机",
 ));
 
 $("#refresh").addEventListener("click", async () => {
@@ -1481,6 +1723,92 @@ $("#usbnet-mode-1").addEventListener("click", () => setUSBNetMode(1));
 $("#usbnet-mode-2").addEventListener("click", () => setUSBNetMode(2));
 $("#usbnet-mode-3").addEventListener("click", () => setUSBNetMode(3));
 $("#reboot-module").addEventListener("click", rebootModule);
+$("#egress-add-destination").addEventListener("click", () => {
+  const policy = collectEgressPolicy();
+  policy.destinations.push({ kind: "domain", value: "", policy: "cellular_direct" });
+  renderEgressDestinations(policy.destinations);
+  $("#egress-destinations .destination:last-child input")?.focus();
+});
+$("#egress-add-app").addEventListener("click", () => {
+  const selected = $("#egress-app-picker").value;
+  const index = selected === "" ? -1 : Number(selected);
+  const app = Number.isInteger(index) && index >= 0 ? egressInstalledApps[index] : null;
+  if (!app) {
+    notice("请先选择一个已安装应用");
+    return;
+  }
+  const policy = collectEgressPolicy();
+  if (policy.applications.some((rule) => rule.path === app.path)) {
+    notice("这个应用已经在策略中");
+    return;
+  }
+  policy.applications.push({ ...app, policy: "follow_global" });
+  renderEgressApplications(policy.applications);
+  $("#egress-app-picker").value = "";
+});
+$("#egress-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    await persistEgressPolicyFromForm();
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#egress-preview").addEventListener("click", async () => {
+  const button = $("#egress-preview");
+  button.disabled = true;
+  try {
+    await previewEgressPolicyFromForm();
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#egress-apply").addEventListener("click", async () => {
+  try {
+    await persistEgressPolicyFromForm(false);
+    const confirmed = await showModal({
+      title: "应用出口策略",
+      message: "将调整 macOS 网络服务顺序并写入所列目标路由，现有 VPN 或网络连接可能短暂重连。随后系统会要求管理员授权，并保存一次可恢复快照。",
+      confirmLabel: "授权并应用",
+    });
+    if (!confirmed) return;
+    const button = $("#egress-apply");
+    button.disabled = true;
+    await api("/api/egress/apply", { method: "POST", body: "{}" });
+    await loadEgressPolicy();
+    notice("系统出口策略已应用");
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    $("#egress-apply").disabled = false;
+  }
+});
+$("#egress-restore").addEventListener("click", async () => {
+  const confirmed = await showModal({
+    title: "恢复应用前网络",
+    message: "将删除 DJOneHub 本次新增的目标路由，并恢复应用前的 macOS 网络服务顺序。系统会要求管理员授权。",
+    confirmLabel: "授权并恢复",
+    danger: true,
+  });
+  if (!confirmed) return;
+  const button = $("#egress-restore");
+  button.disabled = true;
+  try {
+    await api("/api/egress/restore", { method: "POST", body: "{}" });
+    await loadEgressPolicy();
+    notice("已恢复应用前的网络设置");
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
 $("#quota-config-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector("button[type=submit]");

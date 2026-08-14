@@ -86,6 +86,12 @@ type app struct {
 	bandPath      string
 	bandOperation bandOperationState
 
+	egressMu      sync.Mutex
+	egressPolicy  egressPolicyStore
+	egressLoaded  bool
+	egressPath    string
+	egressApplied string
+
 	voiceMu sync.Mutex
 	voice   *voiceService
 
@@ -791,6 +797,13 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/network/check-proxy", a.checkProxyRoute)
 	mux.HandleFunc("POST /api/network/usbnet", a.setUSBNetMode)
 	mux.HandleFunc("POST /api/network/reboot-module", a.rebootModule)
+	mux.HandleFunc("GET /api/egress", a.egressPolicyStatus)
+	mux.HandleFunc("PUT /api/egress", a.saveEgressPolicy)
+	mux.HandleFunc("GET /api/egress/apps", a.egressApplications)
+	mux.HandleFunc("POST /api/egress/preview", a.previewEgressPolicy)
+	mux.HandleFunc("POST /api/egress/apply", a.applyEgressPolicy)
+	mux.HandleFunc("POST /api/egress/restore", a.restoreEgressPolicy)
+	mux.HandleFunc("GET /api/egress/stash-override", a.downloadEgressOverride)
 	mux.HandleFunc("GET /api/voice", a.voiceStatus)
 	mux.HandleFunc("GET /api/voice/calls", a.voiceCalls)
 	mux.HandleFunc("POST /api/voice/dial", a.voiceDial)
@@ -798,6 +811,8 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/voice/hangup", a.voiceHangup)
 	mux.HandleFunc("POST /api/voice/audio/start", a.voiceAudioStart)
 	mux.HandleFunc("POST /api/voice/audio/stop", a.voiceAudioStop)
+	mux.HandleFunc("POST /api/voice/recording/start", a.voiceRecordingStart)
+	mux.HandleFunc("POST /api/voice/recording/stop", a.voiceRecordingStop)
 	content, _ := fs.Sub(webAssets, "web")
 	mux.Handle("/", http.FileServer(http.FS(content)))
 	return localControlSecurity(actionToken, mux)

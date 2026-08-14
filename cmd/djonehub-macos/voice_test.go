@@ -18,6 +18,15 @@ func (b *fakeVoiceAudioBridge) Start() error {
 }
 func (b *fakeVoiceAudioBridge) Stop()                    { b.started = false }
 func (b *fakeVoiceAudioBridge) Status() voiceAudioStatus { return voiceAudioStatus{Running: b.started} }
+func (b *fakeVoiceAudioBridge) StartRecording() (voiceRecordingStatus, error) {
+	return voiceRecordingStatus{Running: true}, nil
+}
+func (b *fakeVoiceAudioBridge) StopRecording() (voiceRecordingStatus, error) {
+	return voiceRecordingStatus{}, nil
+}
+func (b *fakeVoiceAudioBridge) RecordingStatus() voiceRecordingStatus {
+	return voiceRecordingStatus{}
+}
 
 func TestParseCLCCFiltersDataContexts(t *testing.T) {
 	response := "AT+CLCC\r\n" +

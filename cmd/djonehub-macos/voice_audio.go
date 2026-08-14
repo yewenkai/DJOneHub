@@ -7,6 +7,8 @@ import (
 
 var errVoiceAudioUnsupported = errors.New("当前构建不支持 macOS CoreAudio 语音桥接")
 
+const voiceSampleRate = uint32(8000)
+
 type voiceAudioDevice struct {
 	Name      string `json:"name"`
 	Direction string `json:"direction"`
@@ -42,6 +44,9 @@ type voiceAudioBridge interface {
 	Start() error
 	Stop()
 	Status() voiceAudioStatus
+	StartRecording() (voiceRecordingStatus, error)
+	StopRecording() (voiceRecordingStatus, error)
+	RecordingStatus() voiceRecordingStatus
 }
 
 func pcmPeakPercent(input []byte) uint32 {

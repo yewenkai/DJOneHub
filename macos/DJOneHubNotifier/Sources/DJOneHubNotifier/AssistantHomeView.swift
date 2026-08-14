@@ -14,6 +14,11 @@ final class AssistantState: ObservableObject {
     @Published var routeSummary = "正在检查默认出口"
     @Published var downloadBytesPerSecond = 0.0
     @Published var uploadBytesPerSecond = 0.0
+    @Published var showMenuBarSpeed = UserDefaults.standard.object(forKey: "showMenuBarSpeed") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(showMenuBarSpeed, forKey: "showMenuBarSpeed")
+        }
+    }
     @Published var sessionRXBytes: UInt64 = 0
     @Published var sessionTXBytes: UInt64 = 0
     @Published var sessionTotalBytes: UInt64 = 0
@@ -85,6 +90,13 @@ final class AssistantState: ObservableObject {
         lastUpdate = Date()
     }
 
+    func cellularRouteUnavailable(_ error: Error) {
+        usingCellularRoute = false
+        routeSummary = "默认出口状态未知"
+        lastError = error.localizedDescription
+        lastUpdate = Date()
+    }
+
     func receivedMessages(_ items: [SMSMessage]) {
         backendConnected = true
         messages = items
@@ -146,6 +158,11 @@ struct MenuBarDashboardView: View {
                 NetworkDetailView(state: state)
                 RecentMessagesView(messages: state.messages, limit: 3)
                 Divider()
+                Toggle(
+                    "在菜单栏显示模块实时网速",
+                    isOn: $state.showMenuBarSpeed
+                )
+                .toggleStyle(.switch)
                 HStack {
                     Button("打开应用", action: showMainWindow)
                     Spacer()
@@ -394,6 +411,24 @@ private struct RecentMessagesView: View {
 }
 
 enum TrafficText {
+    static func menuBarLines(upload: Double, download: Double, active: Bool) -> String {
+        guard active else { return "↑ --\n↓ --" }
+        return "↑\(menuBarSpeed(upload))\n↓\(menuBarSpeed(download))"
+    }
+
+    static func menuBarSpeed(_ bytesPerSecond: Double) -> String {
+        guard bytesPerSecond > 0 else { return "0K" }
+        if bytesPerSecond >= 1_048_576 {
+            let mebibytes = bytesPerSecond / 1_048_576
+            if mebibytes >= 999.5 {
+                let gibibytes = mebibytes / 1_024
+                return String(format: gibibytes >= 9.95 ? "%.0fG" : "%.1fG", min(gibibytes, 999))
+            }
+            return String(format: mebibytes >= 9.95 ? "%.0fM" : "%.1fM", mebibytes)
+        }
+        return String(format: "%.0fK", bytesPerSecond / 1_024)
+    }
+
     static func speed(_ bytesPerSecond: Double) -> String {
         guard bytesPerSecond > 0 else { return "0 KB/s" }
         if bytesPerSecond >= 1_048_576 {

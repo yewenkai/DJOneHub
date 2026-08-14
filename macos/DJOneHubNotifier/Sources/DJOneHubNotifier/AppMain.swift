@@ -49,6 +49,11 @@ enum SelfTest {
         precondition(NotificationText.smsPreview(longMessage, limit: 8) == "第一行 第二行以…")
         precondition(ServerDate.parse("2026-08-02T12:00:00.123456+08:00").timeIntervalSince1970 > 0)
         precondition(TrafficText.speed(1_048_576) == "1.0 MB/s")
+        precondition(TrafficText.menuBarSpeed(0) == "0K")
+        precondition(TrafficText.menuBarSpeed(512 * 1_024) == "512K")
+        precondition(TrafficText.menuBarSpeed(1.25 * 1_048_576) == "1.2M")
+        precondition(TrafficText.menuBarLines(upload: 512 * 1_024, download: 1.25 * 1_048_576, active: true) == "↑512K\n↓1.2M")
+        precondition(TrafficText.menuBarLines(upload: 1, download: 1, active: false) == "↑ --\n↓ --")
         let state = AssistantState()
         state.receivedTraffic(NetworkTraffic(
             available: true, interface: "en19", rxBytes: 1_000, txBytes: 2_000,
@@ -79,6 +84,8 @@ enum SelfTest {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let statusItemSpeedWidth: CGFloat = 40
+
     private let api: DJOneHubAPI
     private let webURL: URL
     private let panel = NotifierPanel()
@@ -311,8 +318,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !routePollInFlight else { return }
         routePollInFlight = true
         defer { routePollInFlight = false }
-        guard let result = try? await api.cellularRoute() else { return }
-        assistantState.receivedRoute(result)
+        do {
+            assistantState.receivedRoute(try await api.cellularRoute())
+        } catch {
+            assistantState.cellularRouteUnavailable(error)
+        }
         updateStatusItem()
     }
 
@@ -402,7 +412,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.autosaveName = "DJOneHubCellularStatus"
         item.button?.target = self
         item.button?.action = #selector(toggleStatusPopover)
-        item.button?.imagePosition = .imageOnly
         statusItem = item
 
         statusPopover.behavior = .transient
@@ -427,13 +436,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusItem() {
-        statusItem?.button?.image = Self.cellularStatusImage(
-            signalLevel: assistantState.signalLevel,
-            connected: assistantState.backendConnected
-        )
-        statusItem?.button?.toolTip = assistantState.backendConnected
-            ? "\(assistantState.operatorName) · \(assistantState.routeSummary) · ↓ \(TrafficText.speed(assistantState.downloadBytesPerSecond))"
-            : "DJOneHub 后端未连接"
+        guard let button = statusItem?.button else { return }
+        if assistantState.showMenuBarSpeed {
+            statusItem?.length = Self.statusItemSpeedWidth
+            button.image = nil
+            button.imagePosition = .noImage
+            let hasCellularTraffic = assistantState.backendConnected && assistantState.usingCellularRoute
+            let title = TrafficText.menuBarLines(
+                upload: assistantState.uploadBytesPerSecond,
+                download: assistantState.downloadBytesPerSecond,
+                active: hasCellularTraffic
+            )
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            paragraph.minimumLineHeight = 9
+            paragraph.maximumLineHeight = 9
+            button.attributedTitle = NSAttributedString(
+                string: title,
+                attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .medium),
+                    .paragraphStyle: paragraph,
+                ]
+            )
+        } else {
+            statusItem?.length = NSStatusItem.squareLength
+            button.image = Self.cellularStatusImage(
+                signalLevel: assistantState.signalLevel,
+                connected: assistantState.backendConnected
+            )
+            button.imagePosition = .imageOnly
+            button.attributedTitle = NSAttributedString(string: "")
+        }
+        if assistantState.backendConnected && assistantState.usingCellularRoute {
+            button.toolTip = "\(assistantState.operatorName) · \(assistantState.routeSummary) · " +
+                "下载 \(TrafficText.speed(assistantState.downloadBytesPerSecond)) · " +
+                "上传 \(TrafficText.speed(assistantState.uploadBytesPerSecond))"
+        } else if assistantState.backendConnected {
+            button.toolTip = "\(assistantState.operatorName) · 当前默认流量未经过 4G 模块"
+        } else {
+            button.toolTip = "DJOneHub 后端未连接"
+        }
     }
 
     fileprivate static func cellularStatusImage(signalLevel: Int, connected: Bool) -> NSImage {

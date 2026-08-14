@@ -55,6 +55,7 @@
       <button class="tab active" data-view="sms"><span>短信</span><small>收件箱</small></button>
       <button class="tab" data-view="voice"><span>通话</span><small>VoLTE 实验</small></button>
       <button class="tab" data-view="network"><span>网络</span><small>4G USB</small></button>
+      <button class="tab" data-view="egress"><span>出口策略</span><small>公司网 / 4G</small></button>
       <button class="tab" data-view="at"><span>AT 调试</span><small>诊断</small></button>
     </nav>
 
@@ -88,6 +89,8 @@
         <button id="call-hangup" class="secondary danger" type="button">挂断</button>
         <button id="voice-audio-start" class="secondary" type="button">启动音频桥</button>
         <button id="voice-audio-stop" class="secondary" type="button">停止音频桥</button>
+        <button id="voice-recording-start" class="secondary" type="button">开始录音</button>
+        <button id="voice-recording-stop" class="secondary danger" type="button">停止录音</button>
       </div>
       <p id="voice-status" class="inline-status">正在检查 VoLTE 与 USB Audio...</p>
       <div id="voice-audio-grid" class="diagnostic-grid"></div>
@@ -95,7 +98,7 @@
       <div id="voice-calls" class="list empty">当前没有语音通话</div>
       <h2 class="subheading">最近通话</h2>
       <div id="voice-history" class="list empty">暂无通话记录</div>
-      <p class="inline-status">实验功能：请优先使用耳机，避免扬声器声音被麦克风再次送回通话。紧急呼叫不在本功能测试范围内。</p>
+      <p class="inline-status">实验功能：录音必须手动开始，左声道为对方、右声道为本机麦克风，文件仅保存在本机 DJOneHub 数据目录。录音前请告知通话对方并遵守当地法律。建议使用耳机避免回声；紧急呼叫不在本功能测试范围内。</p>
     </section>
 
     <section id="network" class="view">
@@ -188,6 +191,62 @@
       <p class="inline-status">模式 1 已真机确认可同时使用 USB 网卡、短信与 AT 调试，建议日常保持此模式。模式 0 仅用于兼容性排查。切换 usbnet 后才需要重启模块。</p>
       <h2 class="subheading">macOS 网络接口</h2>
       <div id="network-interfaces" class="list empty">尚未读取接口</div>
+    </section>
+
+    <section id="egress" class="view">
+      <div class="view-intro"><div><span class="section-kicker">EGRESS POLICY</span><h2>出口策略</h2></div><p>公司内网固定走普通出口，指定目标可选公司网或 4G；VPN 只切换一个全局底层出口。</p></div>
+      <p id="egress-status" class="inline-status">正在读取当前物理出口与 Stash 能力...</p>
+      <div id="egress-runtime" class="diagnostic-grid"></div>
+      <div id="egress-warning" class="egress-warning" hidden></div>
+
+      <form id="egress-form">
+        <div class="egress-settings-grid">
+          <label class="egress-toggle"><input id="egress-enabled" type="checkbox" checked><span><strong>启用出口策略</strong><small>关闭后保留配置，但不生成或应用路由。</small></span></label>
+          <label>全局 VPN 底层出口
+            <select id="egress-underlay">
+              <option value="corporate">公司网络</option>
+              <option value="cellular">4G 模块</option>
+            </select>
+            <small>一个 VPN 隧道同一时刻只能选择一个底层出口。</small>
+          </label>
+          <label>Stash 的 VPN 策略组名称
+            <input id="egress-vpn-policy" type="text" maxlength="80" value="Proxy" placeholder="例如 Proxy">
+            <small>仅供原生 Stash Mac 的应用“走 VPN”规则使用。</small>
+          </label>
+        </div>
+
+        <div class="section-heading">
+          <div><h2>公司内网 CIDR</h2><p>每行一个 IPv4 CIDR，始终固定到公司网络，避免访问内网服务器时误走 VPN 或 4G。</p></div>
+        </div>
+        <textarea id="egress-cidrs" class="egress-textarea" rows="5" spellcheck="false" placeholder="10.0.0.0/8&#10;172.16.0.0/12&#10;192.168.0.0/16"></textarea>
+
+        <div class="section-heading">
+          <div><h2>指定网站 / IP</h2><p>域名会生成 Stash 规则，并把当前解析到的 IPv4 固定到所选实体网关。</p></div>
+          <button id="egress-add-destination" class="secondary" type="button">添加目标</button>
+        </div>
+        <div id="egress-destinations" class="egress-rule-list"></div>
+
+        <div class="section-heading">
+          <div><h2>应用选择</h2><p>当前 iOS 版 Stash 会忽略应用进程规则；这里先完成选择和持久化，换原生 Stash Mac 后即可导出。</p></div>
+          <div class="heading-actions egress-app-picker">
+            <select id="egress-app-picker" aria-label="选择已安装应用"><option value="">正在读取已安装应用...</option></select>
+            <button id="egress-add-app" class="secondary" type="button">添加应用</button>
+          </div>
+        </div>
+        <div id="egress-applications" class="egress-rule-list"></div>
+
+        <div class="egress-actions">
+          <button type="submit">保存策略</button>
+          <button id="egress-preview" class="secondary" type="button">预览变更</button>
+          <a id="egress-download" class="button-link secondary" href="/api/egress/stash-override" download="DJOneHub.stoverride">下载 Stash Override</a>
+          <button id="egress-apply" class="secondary" type="button">应用系统路由</button>
+          <button id="egress-restore" class="secondary danger" type="button">恢复应用前网络</button>
+        </div>
+      </form>
+
+      <div class="section-heading"><h2>变更预览</h2></div>
+      <div id="egress-preview-panel" class="egress-preview-panel"><p>保存或点击“预览变更”后显示精确路由、服务顺序与 Override 内容。</p></div>
+      <p class="inline-status">“应用系统路由”会调整 macOS 网络服务顺序并写入目标路由，可能短暂中断现有连接，执行时会弹出系统管理员授权；DJOneHub 会保存一次恢复点。</p>
     </section>
 
     <section id="at" class="view">
